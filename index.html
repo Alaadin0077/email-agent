@@ -22,6 +22,19 @@
   }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--gray-bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
 
+  /* PASSWORD GATE */
+  #gate-screen { flex: 1; display: flex; align-items: center; justify-content: center; background: var(--gray-bg); }
+  .gate-card { background: var(--bg); border-radius: var(--radius-lg); border: 1px solid var(--gray-border); padding: 40px 36px; max-width: 380px; width: 100%; text-align: center; box-shadow: var(--shadow); }
+  .gate-logo { width: 56px; height: 56px; border-radius: 14px; background: #1a1a1a; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 20px; font-size: 26px; }
+  .gate-title { font-size: 20px; font-weight: 600; margin-bottom: 6px; }
+  .gate-sub { font-size: 13px; color: var(--text-muted); margin-bottom: 24px; }
+  .gate-input { width: 100%; padding: 11px 14px; border-radius: var(--radius); border: 1px solid var(--gray-border); font-size: 15px; color: var(--text); outline: none; text-align: center; letter-spacing: 3px; margin-bottom: 12px; }
+  .gate-input:focus { border-color: var(--blue); }
+  .gate-btn { width: 100%; padding: 11px; border-radius: var(--radius); background: #1a1a1a; color: white; font-size: 14px; font-weight: 500; border: none; cursor: pointer; transition: background .15s; }
+  .gate-btn:hover { background: #333; }
+  .gate-error { font-size: 12px; color: var(--red); margin-top: 10px; display: none; }
+  .gate-attempts { font-size: 11px; color: var(--text-hint); margin-top: 8px; }
+
   /* LOGIN SCREEN */
   #login-screen { flex: 1; display: flex; align-items: center; justify-content: center; background: var(--gray-bg); }
   .login-card { background: var(--bg); border-radius: var(--radius-lg); border: 1px solid var(--gray-border); padding: 40px 36px; max-width: 420px; width: 100%; text-align: center; box-shadow: var(--shadow); }
@@ -198,8 +211,21 @@
 </head>
 <body>
 
+<!-- PASSWORD GATE -->
+<div id="gate-screen">
+  <div class="gate-card">
+    <div class="gate-logo">🔐</div>
+    <div class="gate-title">Private Access</div>
+    <div class="gate-sub">Enter your access password to continue</div>
+    <input class="gate-input" type="password" id="gate-pass" placeholder="••••••••" onkeydown="if(event.key==='Enter')checkGate()" />
+    <button class="gate-btn" onclick="checkGate()">Unlock</button>
+    <div class="gate-error" id="gate-error">Incorrect password. Please try again.</div>
+    <div class="gate-attempts" id="gate-attempts"></div>
+  </div>
+</div>
+
 <!-- LOGIN -->
-<div id="login-screen">
+<div id="login-screen" style="display:none">
   <div class="login-card">
     <div class="login-logo">
       <svg viewBox="0 0 24 24"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/></svg>
@@ -320,6 +346,41 @@
 <div class="toast" id="toast"></div>
 
 <script>
+// ============================================================
+// PASSWORD GATE — change the password below to your own
+// ============================================================
+const ACCESS_PASSWORD = 'EmailAgent2024!'; // <-- CHANGE THIS to your own password
+let gateAttempts = 0;
+
+function checkGate() {
+  const entered = document.getElementById('gate-pass').value;
+  const errEl = document.getElementById('gate-error');
+  const attEl = document.getElementById('gate-attempts');
+  if(entered === ACCESS_PASSWORD) {
+    document.getElementById('gate-screen').style.display = 'none';
+    document.getElementById('login-screen').style.display = 'flex';
+    sessionStorage.setItem('gate_ok', '1');
+  } else {
+    gateAttempts++;
+    errEl.style.display = 'block';
+    document.getElementById('gate-pass').value = '';
+    if(gateAttempts >= 3) {
+      attEl.textContent = gateAttempts + ' failed attempts. Try again carefully.';
+    }
+    if(gateAttempts >= 5) {
+      document.getElementById('gate-pass').disabled = true;
+      document.querySelector('.gate-btn').disabled = true;
+      errEl.textContent = 'Too many attempts. Please refresh the page.';
+    }
+  }
+}
+
+// Check if already passed gate this session
+if(sessionStorage.getItem('gate_ok') === '1') {
+  document.getElementById('gate-screen').style.display = 'none';
+  document.getElementById('login-screen').style.display = 'flex';
+}
+
 // ============================================================
 // MSAL CONFIG — Microsoft OAuth for personal Outlook accounts
 // ============================================================
