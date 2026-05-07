@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>AI Email Agent</title>
-<script src="https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@3.10.0/lib/msal-browser.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -410,7 +410,8 @@ let glNextId = 6;
 // ============================================================
 async function signIn() {
   try {
-    msalInstance = new msal.PublicClientApplication(msalConfig);
+    const MsalLib = window.msal || window.msalBrowser;
+    msalInstance = new MsalLib.PublicClientApplication(msalConfig);
     await msalInstance.initialize();
     const result = await msalInstance.loginPopup({ scopes });
     accessToken = result.accessToken;
@@ -439,8 +440,10 @@ async function getToken() {
     const result = await msalInstance.acquireTokenSilent({ scopes, account: accounts[0] });
     return result.accessToken;
   } catch(e) {
-    const result = await msalInstance.acquireTokenPopup({ scopes });
-    return result.accessToken;
+    try {
+      const result = await msalInstance.acquireTokenPopup({ scopes });
+      return result.accessToken;
+    } catch(e2) { return null; }
   }
 }
 
