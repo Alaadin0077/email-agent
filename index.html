@@ -387,13 +387,15 @@ if(sessionStorage.getItem('gate_ok') === '1') {
 const msalConfig = {
   auth: {
     clientId: 'c0e271ab-48fd-4c53-bc89-45b666bf3bc2',
-    authority: 'https://login.microsoftonline.com/consumers',
-    redirectUri: 'https://alaadin0077.github.io/email-agent/'
+    authority: 'https://login.microsoftonline.com/common',
+    redirectUri: 'https://alaadin0077.github.io/email-agent/',
+    navigateToLoginRequestUrl: false
   },
-  cache: { cacheLocation: 'sessionStorage' }
+  cache: { cacheLocation: 'sessionStorage', storeAuthStateInCookie: true },
+  system: { allowNativeBroker: false }
 };
 
-const scopes = ['Mail.Read', 'Mail.Send', 'Mail.ReadWrite', 'User.Read'];
+const scopes = ['openid', 'profile', 'User.Read', 'Mail.Read', 'Mail.Send', 'Mail.ReadWrite'];
 let msalInstance, accessToken, allEmails = [], sigData = null, pdfs = [], curNav = 'all', selId = null;
 
 let guidelines = [
@@ -411,9 +413,11 @@ let glNextId = 6;
 async function signIn() {
   try {
     const MsalLib = window.msal || window.msalBrowser;
+    if(!MsalLib) { throw new Error('Microsoft login library failed to load. Please refresh the page.'); }
     msalInstance = new MsalLib.PublicClientApplication(msalConfig);
     await msalInstance.initialize();
-    const result = await msalInstance.loginPopup({ scopes });
+    await msalInstance.handleRedirectPromise();
+    const result = await msalInstance.loginPopup({ scopes, prompt: 'select_account' });
     accessToken = result.accessToken;
     document.getElementById('user-email-display').textContent = result.account.username;
     document.getElementById('login-screen').style.display = 'none';
@@ -603,8 +607,8 @@ async function selectEmail(id) {
         <div class="action-pill reply">↩️ Draft & send reply</div>
         <div class="draft-box" id="draft-content" contenteditable="true">${esc(draft)}</div>
         <div class="dactions">
-          <button class="dact" onclick="regenerateDraft('${id}')">🔄 Regenerate</button>
-          <button class="dact send" onclick="sendReply('${id}')">📤 Send reply</button>
+          <button class="dact" onclick="regenerateDraft()">🔄 Regenerate</button>
+          <button class="dact send" onclick="sendReply()">📤 Send reply</button>
         </div>
       </div>`;
   } else if(e.action === 'sign') {
@@ -621,8 +625,8 @@ async function selectEmail(id) {
           </div>
         </div>
         <div class="dactions">
-          <button class="dact" onclick="setNav(document.querySelector(\'.nav-item:nth-child(14)\'),\'pdf\')">📁 Upload signature</button>
-          <button class="dact sign-send" onclick="signAndSend('${id}')" ${sigReady?'':'disabled'}>✍️ Sign & send</button>
+          <button class="dact" onclick="setNav(document.querySelector('.nav-item:nth-child(14)'),'pdf')">📁 Upload signature</button>
+          <button class="dact sign-send" onclick="signAndSend()" ${sigReady?'':'disabled'}>✍️ Sign & send</button>
         </div>
       </div>`;
   } else {
@@ -664,11 +668,13 @@ function buildDraft(e) {
 // SEND REPLY
 // ============================================================
 async function sendReply(id) {
-  const e = allEmails.find(x => x.id === id);
+  const targetId = id || selId;
+  const e = allEmails.find(x => x.id === targetId);
+  if(!e) { toast('No email selected.'); return; }
   const draftEl = document.getElementById('draft-content');
   const body = draftEl ? draftEl.innerText : buildDraft(e);
   try {
-    await graphPost(`/me/messages/${id}/reply`, {
+    await graphPost(`/me/messages/${encodeURIComponent(targetId)}/reply`, {
       message: {
         body: { contentType: 'Text', content: body }
       }
@@ -685,25 +691,25 @@ async function sendReply(id) {
 }
 
 function regenerateDraft(id) {
-  const e = allEmails.find(x => x.id === id);
+  const targetId = id || selId;
+  const e = allEmails.find(x => x.id === targetId);
   const el = document.getElementById('draft-content');
-  if(el) el.innerText = buildDraft(e);
+  if(el && e) el.innerText = buildDraft(e);
 }
 
 // ============================================================
 // SIGN PDF & SEND
 // ============================================================
 async function signAndSend(id) {
+  const targetId = id || selId;
   if(!sigData) { toast('Upload your signature first in the PDF Signing tab.'); return; }
-  const e = allEmails.find(x => x.id === id);
+  const e = allEmails.find(x => x.id === targetId);
+  if(!e) { toast('No email selected.'); return; }
   toast('Signing PDF and sending back to ' + e.from + '...');
   try {
-    // Get attachments
-    const attachData = await graphGet(`/me/messages/${id}/attachments`);
+    const attachData = await graphGet(`/me/messages/${encodeURIComponent(targetId)}/attachments`);
     const pdfAttach = attachData.value?.find(a => a.name?.toLowerCase().endsWith('.pdf'));
-    if(!pdfAttach) {
-      toast('No PDF attachment found in this email.'); return;
-    }
+    if(!pdfAttach) { toast('No PDF attachment found in this email.'); return; }
     // Sign the PDF using pdf-lib
     const pdfBytes = Uint8Array.from(atob(pdfAttach.contentBytes), c => c.charCodeAt(0));
     const pdfDoc = await PDFLib.PDFDocument.load(pdfBytes);
@@ -728,7 +734,7 @@ async function signAndSend(id) {
     const signedBase64 = btoa(String.fromCharCode(...signedBytes));
     // Send reply with signed PDF
     const token = await getToken();
-    await fetch(`https://graph.microsoft.com/v1.0/me/messages/${id}/replyAll`, {
+    await fetch(`https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(targetId)}/replyAll`, {
       method: 'POST',
       headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
       body: JSON.stringify({
