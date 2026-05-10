@@ -1353,12 +1353,27 @@ async function signAndSend(id) {
       return null;
     }
 
-    toast('📤 Sending signed PDF…');
+    toast('🔍 Resolving recipient…');
 
     const resolved = await resolveRealRecipient();
 
     if (!resolved) {
-      toast('⚠️ Could not find external recipient. Please reply manually.');
+      // Show debug info — what did we find in the thread?
+      try {
+        const msgMeta2 = await graphGet(`/me/messages/${enc}?$select=conversationId,from,toRecipients,ccRecipients,body`);
+        const allFound = [];
+        const fa = msgMeta2.from?.emailAddress?.address;
+        if (fa) allFound.push('FROM:' + fa);
+        for (const r of msgMeta2.toRecipients||[]) allFound.push('TO:' + (r.emailAddress?.address||''));
+        for (const r of msgMeta2.ccRecipients||[]) allFound.push('CC:' + (r.emailAddress?.address||''));
+        // Also show body emails
+        const bodyText = (msgMeta2.body?.content||'').replace(/<[^>]+>/g,' ');
+        const bodyEmails = (bodyText.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g)||[]);
+        for (const be of bodyEmails) allFound.push('BODY:' + be);
+        toast('❌ All addresses found: ' + allFound.slice(0,5).join(' | '));
+      } catch(de) {
+        toast('⚠️ Could not find external recipient. From: ' + e.email);
+      }
       return;
     }
 
