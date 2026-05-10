@@ -1048,6 +1048,13 @@ async function selectEmail(id) {
             <div class="sign-card-sub">${ready ? '✅ Signature loaded — ready to sign and send.' : '⚠️ Upload your signature in the PDF Signing tab first.'}</div>
           </div>
         </div>
+        <div style="margin-bottom:10px">
+          <div style="font-size:11px;font-weight:600;color:var(--ink-3);margin-bottom:4px">Send signed PDF to:</div>
+          <input id="manual-recipient" type="email" placeholder="recipient@example.com"
+            style="width:100%;padding:8px 11px;border:1px solid var(--ink-5);border-radius:var(--r);font-size:13px;font-family:var(--font);outline:none;color:var(--ink)"
+            onfocus="this.style.borderColor='var(--blue)'" onblur="this.style.borderColor='var(--ink-5)'" />
+          <div style="font-size:10px;color:var(--ink-4);margin-top:3px">Agent will auto-detect from thread. Override here if needed.</div>
+        </div>
         <div class="d-actions">
           <button class="dact" onclick="setNav(document.querySelectorAll('.nav-item')[10],'pdf')">📁 Upload signature</button>
           <button class="dact sign-send" onclick="signAndSend()" ${ready?'':'disabled'}>✍️ Sign &amp; send</button>
@@ -1208,7 +1215,6 @@ async function signAndSend(id) {
 
           if (isPO) {
             // Place sig so its bottom sits just above "Alaadin Yacout"
-            // In PDF space y increases upward, so "above" = higher y value
             sigX = pageAnchorX;
             sigY = pageAnchorY + pageAnchorH + 4;
           } else {
@@ -1217,7 +1223,22 @@ async function signAndSend(id) {
             sigY = pageAnchorY - sigH - 4;
           }
 
-          // Clamp within page bounds
+          // If CTM mapping produced coordinates outside the page,
+          // the transform math didn't work — use a safe proportional fallback.
+          const inBoundsX = sigX >= 0 && sigX <= pgSz.width;
+          const inBoundsY = sigY >= 0 && sigY <= pgSz.height;
+          if (!inBoundsX || !inBoundsY) {
+            console.warn('[placement] CTM coords out of bounds', {sigX, sigY, pgSz});
+            // Fallback: use proportional position based on raw coords ratio
+            const rawMaxY = Math.max(...items.map(i => i.y), 1);
+            const rawMaxX = Math.max(...items.map(i => i.x), 1);
+            sigX = (anchor.x / rawMaxX) * pgSz.width;
+            sigY = isPO
+              ? (anchor.y / rawMaxY) * pgSz.height + pageAnchorH + 4
+              : (anchor.y / rawMaxY) * pgSz.height - sigH - 4;
+          }
+
+          // Final clamp within page bounds
           sigX = Math.max(10, Math.min(sigX, pgSz.width  - sigW - 10));
           sigY = Math.max(10, Math.min(sigY, pgSz.height - sigH - 10));
           break;
@@ -1357,28 +1378,24 @@ async function signAndSend(id) {
 
     const resolved = await resolveRealRecipient();
 
-    if (!resolved) {
-      // Show debug info — what did we find in the thread?
-      try {
-        const msgMeta2 = await graphGet(`/me/messages/${enc}?$select=conversationId,from,toRecipients,ccRecipients,body`);
-        const allFound = [];
-        const fa = msgMeta2.from?.emailAddress?.address;
-        if (fa) allFound.push('FROM:' + fa);
-        for (const r of msgMeta2.toRecipients||[]) allFound.push('TO:' + (r.emailAddress?.address||''));
-        for (const r of msgMeta2.ccRecipients||[]) allFound.push('CC:' + (r.emailAddress?.address||''));
-        // Also show body emails
-        const bodyText = (msgMeta2.body?.content||'').replace(/<[^>]+>/g,' ');
-        const bodyEmails = (bodyText.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g)||[]);
-        for (const be of bodyEmails) allFound.push('BODY:' + be);
-        toast('❌ All addresses found: ' + allFound.slice(0,5).join(' | '));
-      } catch(de) {
-        toast('⚠️ Could not find external recipient. From: ' + e.email);
-      }
+    // Check if user typed a manual recipient in the input field
+    const manualInput = document.getElementById('manual-recipient');
+    const manualValue = manualInput ? manualInput.value.trim() : '';
+
+    let recipientAddress, recipientName;
+
+    if (resolved) {
+      recipientAddress = resolved.address;
+      recipientName    = resolved.name || resolved.address.split('@')[0];
+    } else if (manualValue && manualValue.includes('@')) {
+      // User provided recipient manually
+      recipientAddress = manualValue;
+      recipientName    = manualValue.split('@')[0];
+    } else {
+      toast('⚠️ Could not detect recipient. Please type the email address in the "Send to" field.');
+      if (manualInput) manualInput.focus();
       return;
     }
-
-    const recipientAddress = resolved.address;
-    const recipientName    = resolved.name || recipientAddress.split('@')[0];
 
     const greetingName = (recipientName.split(' ')[0]) || 'Sir/Madam';
 
