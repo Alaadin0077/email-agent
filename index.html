@@ -591,6 +591,18 @@ body {
 }
 .add-gl-btn:hover { border-color: var(--blue); color: var(--blue); background: var(--blue-soft); }
 
+/* ── PDF DEBUGGER ── */
+.dbg-table { width:100%; border-collapse:collapse; font-size:11px; font-family:var(--mono); background:var(--white); border:1px solid var(--ink-6); border-radius:var(--r); overflow:hidden; }
+.dbg-table th { background:var(--ink-7); padding:6px 10px; text-align:left; font-weight:600; color:var(--ink-2); border-bottom:1px solid var(--ink-6); }
+.dbg-table td { padding:5px 10px; border-bottom:1px solid var(--ink-7); color:var(--ink-2); }
+.dbg-table tr:last-child td { border-bottom:none; }
+.dbg-table tr.highlight td { background:var(--green-soft); color:var(--green); font-weight:600; }
+.dbg-raw { background:var(--ink); color:#a8ff78; font-family:var(--mono); font-size:11px; padding:14px; border-radius:var(--r); white-space:pre-wrap; max-height:220px; overflow-y:auto; }
+.dbg-status { padding:10px 14px; border-radius:var(--r); font-size:12px; font-weight:500; }
+.dbg-status.ok { background:var(--green-soft); color:var(--green); border:1px solid var(--green-border); }
+.dbg-status.warn { background:var(--amber-soft); color:var(--amber); border:1px solid var(--amber-border); }
+.dbg-status.err { background:var(--red-soft); color:var(--red); border:1px solid var(--red-border); }
+
 /* ── TOAST ── */
 #toast {
   position: fixed; bottom: 22px; right: 22px;
@@ -683,6 +695,7 @@ body {
       <div class="nav-group">Tools</div>
       <div class="nav-item" onclick="setNav(this,'pdf')"><span class="nav-ic">📄</span>PDF signing</div>
       <div class="nav-item" onclick="setNav(this,'guidelines')"><span class="nav-ic">📋</span>Guidelines<span class="nbadge dim" id="nb-gl">0</span></div>
+      <div class="nav-item" onclick="setNav(this,'debug')"><span class="nav-ic">🔬</span>PDF Debugger</div>
     </div>
 
     <div class="main">
@@ -732,6 +745,19 @@ body {
           <div class="uz-hint">Or the agent will handle PDFs from emails automatically</div>
           <input type="file" id="pdf-input" accept=".pdf" style="display:none" onchange="addManualPdf(this)" />
         </div>
+      </div>
+
+      <!-- PDF DEBUGGER PANEL -->
+      <div class="panel" id="debug-panel">
+        <div class="panel-title">PDF Debugger</div>
+        <div class="panel-sub">Upload a PO or OBD PDF here to see exactly what text the agent finds and where it places the signature. Use this to diagnose wrong placement.</div>
+        <div class="upload-zone" onclick="document.getElementById('dbg-input').click()">
+          <span class="uz-icon">🔬</span>
+          <div class="uz-title">Upload a PDF to analyse</div>
+          <div class="uz-hint">The agent will extract all text items with their X/Y coordinates</div>
+          <input type="file" id="dbg-input" accept=".pdf" style="display:none" onchange="debugPdf(this)" />
+        </div>
+        <div id="dbg-results"></div>
       </div>
 
       <!-- GUIDELINES PANEL -->
@@ -1197,23 +1223,88 @@ async function signAndSend(id) {
     const signedBytes  = await pdfDoc.save();
     const signedBase64 = btoa(Array.from(signedBytes).map(b => String.fromCharCode(b)).join(''));
 
-    toast('📤 Sending signed PDF…');
+    toast('📤 Finding original sender in thread…');
 
-    // ── 5. Build recipient list & email body ──────────────────
+    // ── 5. Resolve the true recipient by reading the email thread ─────────
     //
-    // Routing logic:
-    //   TO:  e.email  = the person who sent the email TO alaadinyacout@gulfmedical.com
-    //                   (i.e. the original sender — we are replying to them)
-    //   CC:  alaadinyacout@gulfmedical.com — always copied, never in To:
+    // Problem: e.email may be alaadinyacout@gulfmedical.com (when the
+    // message was sent directly to Alaadin, or when it appears as the
+    // forwarding address). We must never reply TO Alaadin — only CC him.
     //
-    // Greeting name = the sender's display name (first word), taken directly
-    // from e.from (the From: field of the incoming email). This is the person
-    // we are writing back to, so "Dear [their name]" is correct.
+    // Strategy:
+    //   1. Fetch ALL messages in the same conversation thread, ordered oldest first.
+    //   2. Walk each message and collect every From/To/CC address found.
+    //   3. Return the first address that is NOT alaadinyacout@gulfmedical.com.
+    //   4. Fall back to e.email only if every address in the thread is Alaadin's.
     //
     const ALAADIN_EMAIL = 'alaadinyacout@gulfmedical.com';
 
-    // Use the sender's first name for the greeting
-    const greetingName = e.from.split(' ')[0] || 'Sir/Madam';
+    async function resolveRealRecipient() {
+      try {
+        // Get the conversationId of the current message
+        const msgMeta = await graphGet(
+          `/me/messages/${enc}?$select=conversationId,from,toRecipients,ccRecipients`
+        );
+        const convId = msgMeta.conversationId;
+        if (!convId) return null;
+
+        // Fetch all messages in this conversation, oldest first, pick From/To/CC
+        const threadData = await graphGet(
+          `/me/messages?$filter=conversationId eq '${convId}'` +
+          `&$orderby=receivedDateTime asc` +
+          `&$select=from,toRecipients,ccRecipients,receivedDateTime` +
+          `&$top=50`
+        );
+
+        const candidates = []; // { address, name } in order of appearance
+
+        for (const msg of threadData.value || []) {
+          // From field
+          const fromAddr = msg.from?.emailAddress?.address || '';
+          const fromName = msg.from?.emailAddress?.name   || '';
+          if (fromAddr) candidates.push({ address: fromAddr, name: fromName });
+
+          // To recipients
+          for (const r of msg.toRecipients || []) {
+            const a = r.emailAddress?.address || '';
+            const n = r.emailAddress?.name    || '';
+            if (a) candidates.push({ address: a, name: n });
+          }
+
+          // CC recipients
+          for (const r of msg.ccRecipients || []) {
+            const a = r.emailAddress?.address || '';
+            const n = r.emailAddress?.name    || '';
+            if (a) candidates.push({ address: a, name: n });
+          }
+        }
+
+        // Return first address that is not Alaadin's
+        for (const c of candidates) {
+          if (c.address.toLowerCase() !== ALAADIN_EMAIL.toLowerCase()) {
+            return c;
+          }
+        }
+      } catch (threadErr) {
+        console.warn('[thread lookup] failed:', threadErr.message);
+      }
+      return null; // fallback handled below
+    }
+
+    toast('📤 Sending signed PDF…');
+
+    // Resolve recipient — fall back to e.email / e.from if thread lookup fails
+    const resolved = await resolveRealRecipient();
+    const recipientAddress = resolved?.address || e.email;
+    const recipientName    = resolved?.name    || e.from;
+
+    // Safety check — if we still ended up with Alaadin's address, warn & stop
+    if (recipientAddress.toLowerCase() === ALAADIN_EMAIL.toLowerCase()) {
+      toast('⚠️ Could not find external recipient in thread. Please reply manually.');
+      return;
+    }
+
+    const greetingName = (recipientName.split(' ')[0]) || 'Sir/Madam';
 
     // Build the email body depending on document type
     let emailBody;
@@ -1225,8 +1316,8 @@ async function signAndSend(id) {
 
     // ── 6. Send a CLEAN new message — ONLY the signed PDF attached ─
     //
-    // TO:  the original sender (person who emailed alaadin)
-    // CC:  alaadinyacout@gulfmedical.com  ← copied, NOT in To:
+    // TO:  first non-Alaadin address found in the thread
+    // CC:  alaadinyacout@gulfmedical.com — copied, never in To:
     //
     const sendRes = await fetch('https://graph.microsoft.com/v1.0/me/sendMail', {
       method: 'POST',
@@ -1235,7 +1326,7 @@ async function signAndSend(id) {
         message: {
           subject: 'Re: ' + e.subject,
           body: { contentType: 'Text', content: emailBody },
-          toRecipients: [{ emailAddress: { address: e.email, name: e.from } }],
+          toRecipients: [{ emailAddress: { address: recipientAddress, name: recipientName } }],
           ccRecipients: [{ emailAddress: { address: ALAADIN_EMAIL, name: 'Alaadin Yacout' } }],
           attachments: [{
             '@odata.type': '#microsoft.graph.fileAttachment',
@@ -1254,7 +1345,7 @@ async function signAndSend(id) {
       return;
     }
 
-    toast('✅ Signed PDF sent to ' + e.from + '!');
+    toast('✅ Signed PDF sent to ' + recipientName + '!');
     e.action = 'done'; e.tags = e.tags.filter(t => t !== 'sign');
     updateBadges(); renderEmailList(filterByNav(curNav));
     document.getElementById('detail-panel').innerHTML = '<div class="detail-empty"><div class="d-icon">✅</div><p>Signed PDF sent successfully</p></div>';
@@ -1265,165 +1356,449 @@ async function signAndSend(id) {
 
 // ── PDF TEXT HELPERS ──────────────────────────────────────
 //
-// extractTextItems: decode a page's raw content stream and parse PDF text
-// operators to collect { text, x, y, h } items.
+// Strategy: get the raw content stream bytes via pdf-lib 1.x internals,
+// then tokenise the full stream as a character sequence (not line-by-line)
+// so we handle operators that span lines or sit on the same line.
 //
-// We try two approaches:
-//   1. pdf-lib's high-level node access (.encodeDict / context lookup)
-//   2. Walking page.node raw dict for a Contents stream
+// Returns array of { text, x, y, h } — coordinates in PDF user space
+// (bottom-left origin, y increases upward).
 //
-// The output is good enough to locate anchor strings by position.
-// For scanned / image-only PDFs the result will be empty and callers
-// fall back to default coordinates.
-//
+
+function getRawStreamBytes(page) {
+  // pdf-lib 1.x stores content streams differently depending on how the PDF
+  // was loaded. We try every known path.
+  const ctx = page.node.context;
+
+  // Helper: resolve a ref or return the object directly
+  function resolve(obj) {
+    if (!obj) return null;
+    try {
+      // PDFRef has .objectNumber
+      if (typeof obj.objectNumber === 'number') return ctx.lookup(obj);
+      return obj;
+    } catch(_) { return null; }
+  }
+
+  // Helper: extract bytes from a PDFRawStream / PDFStream
+  function streamBytes(s) {
+    if (!s) return null;
+    if (s.contents instanceof Uint8Array) return s.contents;
+    if (typeof s.contents === 'string')    return new TextEncoder().encode(s.contents);
+    if (s.getContents)                     return s.getContents();
+    return null;
+  }
+
+  // Path 1: page.node.get with PDFName
+  try {
+    const PDFName = Object.getPrototypeOf(ctx.obj('X')).constructor;
+    const contentsKey = ctx.obj('Contents');
+    const raw = page.node.get(contentsKey);
+    const resolved = resolve(raw);
+    if (resolved) {
+      // May be a PDFArray of streams (content stream array)
+      if (Array.isArray(resolved.asArray?.()) || resolved.constructor?.name === 'PDFArray') {
+        const arr = resolved.asArray ? resolved.asArray() : [];
+        const parts = [];
+        for (const ref of arr) {
+          const s = resolve(ref);
+          const b = streamBytes(s);
+          if (b) parts.push(b);
+        }
+        if (parts.length) {
+          const total = parts.reduce((a,b) => a + b.length, 0);
+          const merged = new Uint8Array(total);
+          let off = 0;
+          for (const p of parts) { merged.set(p, off); off += p.length; }
+          return merged;
+        }
+      }
+      const b = streamBytes(resolved);
+      if (b) return b;
+    }
+  } catch(_) {}
+
+  // Path 2: iterate over context objects looking for content streams
+  // that belong to this page (cross-reference via page Resources or Contents)
+  try {
+    // page.node is a PDFPageLeaf; its indirect ref is page.ref
+    const pageRef = page.ref;
+    // Walk all objects in the context
+    const enumerator = ctx.enumerateIndirectObjects?.();
+    if (enumerator) {
+      for (const [ref, obj] of enumerator) {
+        if (obj && obj.constructor?.name === 'PDFRawStream') {
+          const dict = obj.dict;
+          // A content stream typically has no /Type or /Type /XObject
+          // We can't easily match it to the page without the full xref,
+          // so we collect all raw streams and decode them all — the text
+          // parser will just produce empty results for non-text streams.
+          const b = streamBytes(obj);
+          if (b && b.length > 0) return b; // return first, may need to merge
+        }
+      }
+    }
+  } catch(_) {}
+
+  return null;
+}
+
 function extractTextItems(page) {
   const items = [];
   try {
-    // Grab raw bytes from the page's content stream via pdf-lib internals
-    let rawBytes = null;
-
-    // Attempt 1: page.contentStream (pdf-lib ≥1.11)
-    try {
-      const cs = page.node.get(page.doc.context.obj('Contents'));
-      if (cs && cs.contents) rawBytes = cs.contents;
-    } catch(_) {}
-
-    // Attempt 2: walk the PDFDict for /Contents
-    if (!rawBytes) {
-      try {
-        const contentsRef = page.node.get(
-          page.node.context.obj('Contents')
-        );
-        if (contentsRef) {
-          const stream = page.node.context.lookup(contentsRef);
-          if (stream && stream.contents) rawBytes = stream.contents;
-        }
-      } catch(_) {}
-    }
-
-    // Attempt 3: use the undocumented .node.Contents path used by pdf-lib 1.x
-    if (!rawBytes) {
-      try {
-        const n = page.node;
-        // n.Contents may be a PDFRef → resolve it
-        const contentsObj = n.Contents;
-        if (contentsObj) {
-          const resolved = n.context.lookup(contentsObj);
-          if (resolved && resolved.contents) rawBytes = resolved.contents;
-          else if (resolved && resolved.getContents) rawBytes = resolved.getContents();
-        }
-      } catch(_) {}
-    }
-
+    const rawBytes = getRawStreamBytes(page);
     if (!rawBytes) return items;
 
-    const content = typeof rawBytes === 'string'
-      ? rawBytes
-      : new TextDecoder('latin1').decode(rawBytes);
+    // Decode as latin-1 so byte values map 1:1 to char codes
+    const content = new TextDecoder('latin1').decode(rawBytes);
 
-    // Tokenise the content stream line by line
-    // (PDF streams often have operators on individual lines, but not always —
-    //  we do a best-effort single-pass parse which is sufficient for anchors)
-    const lines = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
-    let curX = 0, curY = 0, lineLeading = 0, inBT = false, fontSize = 12;
-
-    for (const raw of lines) {
-      const line = raw.trim();
-      if (!line) continue;
-
-      if (line === 'BT') { inBT = true; curX = 0; curY = 0; continue; }
-      if (line === 'ET') { inBT = false; continue; }
-      if (!inBT) continue;
-
-      // Tf  — /FontName Size Tf
-      const tfM = line.match(/\/\S+\s+([\d.]+)\s+Tf$/);
-      if (tfM) { fontSize = parseFloat(tfM[1]); continue; }
-
-      // TL  — leading
-      const tlM = line.match(/^([\d.]+)\s+TL$/);
-      if (tlM) { lineLeading = parseFloat(tlM[1]); continue; }
-
-      // Td / TD  — relative displacement
-      const tdM = line.match(/^(-?[\d.]+(?:\.[\d]+)?)\s+(-?[\d.]+(?:\.[\d]+)?)\s+TD?$/);
-      if (tdM) {
-        curX += parseFloat(tdM[1]);
-        curY += parseFloat(tdM[2]);
-        if (line.endsWith('TD')) lineLeading = -parseFloat(tdM[2]);
-        continue;
-      }
-
-      // T*  — move to start of next line
-      if (line === 'T*') { curY -= lineLeading; continue; }
-
-      // Tm  — set text matrix: a b c d e f Tm  (e=x, f=y)
-      const tmM = line.match(/^(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+Tm$/);
-      if (tmM) {
-        curX = parseFloat(tmM[5]);
-        curY = parseFloat(tmM[6]);
-        continue;
-      }
-
-      // Tj  — show string: (text) Tj
-      const tjM = line.match(/^\((.*)\)\s+Tj$/);
-      if (tjM) {
-        items.push({ text: decodePdfString(tjM[1]), x: curX, y: curY, h: fontSize });
-        continue;
-      }
-
-      // TJ  — show array: [(str1) kern (str2) ...] TJ
-      const tjAM = line.match(/^\[(.*)\]\s+TJ$/);
-      if (tjAM) {
-        const parts = [];
-        const re = /\(([^)]*)\)/g;
-        let m;
-        while ((m = re.exec(tjAM[1])) !== null) parts.push(m[1]);
-        if (parts.length) items.push({ text: decodePdfString(parts.join('')), x: curX, y: curY, h: fontSize });
-        continue;
-      }
-
-      // ' and " operators (move to next line then show)
-      const quoteM = line.match(/^\((.*)\)\s+'$/);
-      if (quoteM) {
-        curY -= lineLeading;
-        items.push({ text: decodePdfString(quoteM[1]), x: curX, y: curY, h: fontSize });
-      }
-    }
-  } catch(_) { /* non-fatal */ }
+    // Tokenise the entire stream as a sequence of tokens.
+    // PDF token types we care about:
+    //   name:    /Foo
+    //   number:  123  -4.5
+    //   string:  (hello world)  <hex>
+    //   keyword: BT ET Tf Td TD Tm T* Tj TJ TL ' "
+    //
+    // We build a flat token list then process it with a state machine.
+    const tokens = tokenisePDFStream(content);
+    parsePDFTokens(tokens, items);
+  } catch(e) {
+    console.warn('[PDF debug] extractTextItems error:', e);
+  }
   return items;
 }
 
-// Decode common PDF string escape sequences
-function decodePdfString(s) {
-  return s
-    .replace(/\\n/g, '\n')
-    .replace(/\\r/g, '\r')
-    .replace(/\\t/g, '\t')
-    .replace(/\\([0-7]{3})/g, (_, oct) => String.fromCharCode(parseInt(oct, 8)))
-    .replace(/\\\\/g, '\\')
-    .replace(/\\\(/g, '(')
-    .replace(/\\\)/g, ')');
+function tokenisePDFStream(src) {
+  const tokens = [];
+  let i = 0;
+  const n = src.length;
+
+  while (i < n) {
+    // Skip whitespace
+    while (i < n && /\s/.test(src[i])) i++;
+    if (i >= n) break;
+
+    const ch = src[i];
+
+    // Comment
+    if (ch === '%') {
+      while (i < n && src[i] !== '\n' && src[i] !== '\r') i++;
+      continue;
+    }
+
+    // Literal string  (...)
+    if (ch === '(') {
+      let depth = 1, j = i + 1, s = '';
+      while (j < n && depth > 0) {
+        if (src[j] === '\\') {
+          const esc = src[j+1];
+          if (esc === 'n')       { s += '\n'; j += 2; }
+          else if (esc === 'r')  { s += '\r'; j += 2; }
+          else if (esc === 't')  { s += '\t'; j += 2; }
+          else if (esc === '(')  { s += '(';  j += 2; }
+          else if (esc === ')')  { s += ')';  j += 2; }
+          else if (esc === '\\') { s += '\\'; j += 2; }
+          else if (/[0-7]/.test(esc)) {
+            let oct = '', k = j + 1;
+            while (k < j + 4 && k < n && /[0-7]/.test(src[k])) { oct += src[k++]; }
+            s += String.fromCharCode(parseInt(oct, 8)); j = k;
+          } else { s += src[j+1]; j += 2; }
+        } else {
+          if (src[j] === '(') depth++;
+          if (src[j] === ')') { depth--; if (depth === 0) { j++; break; } }
+          if (depth > 0) s += src[j];
+          j++;
+        }
+      }
+      tokens.push({ type: 'string', val: s });
+      i = j;
+      continue;
+    }
+
+    // Hex string  <...>
+    if (ch === '<' && src[i+1] !== '<') {
+      let j = i + 1, hex = '';
+      while (j < n && src[j] !== '>') { if (/[0-9a-fA-F]/.test(src[j])) hex += src[j]; j++; }
+      if (hex.length % 2) hex += '0';
+      let s = '';
+      for (let k = 0; k < hex.length; k += 2) s += String.fromCharCode(parseInt(hex.slice(k,k+2), 16));
+      tokens.push({ type: 'string', val: s });
+      i = j + 1;
+      continue;
+    }
+
+    // Dictionary or array (skip)
+    if ((ch === '<' && src[i+1] === '<') || ch === '[' ) {
+      // Collect array for TJ
+      if (ch === '[') {
+        const arr = [];
+        i++;
+        while (i < n && src[i] !== ']') {
+          while (i < n && /\s/.test(src[i])) i++;
+          if (src[i] === '(') {
+            // string inside TJ array
+            let depth = 1, j = i + 1, s = '';
+            while (j < n && depth > 0) {
+              if (src[j] === '\\') {
+                const esc = src[j+1];
+                if (esc === 'n') { s+='\n'; j+=2; }
+                else if (esc === 'r') { s+='\r'; j+=2; }
+                else if (esc === 't') { s+='\t'; j+=2; }
+                else if (esc === '(') { s+='('; j+=2; }
+                else if (esc === ')') { s+=')'; j+=2; }
+                else if (esc === '\\') { s+='\\'; j+=2; }
+                else if (/[0-7]/.test(esc)) {
+                  let oct='', k=j+1;
+                  while (k<j+4 && k<n && /[0-7]/.test(src[k])) { oct+=src[k++]; }
+                  s+=String.fromCharCode(parseInt(oct,8)); j=k;
+                } else { s+=src[j+1]; j+=2; }
+              } else {
+                if (src[j]==='(') depth++;
+                if (src[j]===')') { depth--; if(depth===0){j++;break;} }
+                if (depth>0) s+=src[j];
+                j++;
+              }
+            }
+            arr.push({ type: 'string', val: s });
+            i = j;
+          } else if (/[-\d.]/.test(src[i])) {
+            let num = '';
+            if (src[i]==='-') { num='-'; i++; }
+            while (i < n && /[\d.]/.test(src[i])) { num += src[i++]; }
+            arr.push({ type: 'number', val: parseFloat(num) });
+          } else if (src[i] === ']') { break; }
+          else i++;
+        }
+        if (i < n) i++; // skip ']'
+        tokens.push({ type: 'array', val: arr });
+        continue;
+      }
+      // skip dictionary
+      let depth = 1, j = i + 2;
+      while (j < n && depth > 0) {
+        if (src[j]==='<'&&src[j+1]==='<') { depth++; j+=2; }
+        else if (src[j]==='>'&&src[j+1]==='>') { depth--; j+=2; }
+        else j++;
+      }
+      i = j;
+      continue;
+    }
+
+    // Name  /Foo
+    if (ch === '/') {
+      let j = i + 1, name = '';
+      while (j < n && !/[\s\/<>\[\](){}%]/.test(src[j])) { name += src[j++]; }
+      tokens.push({ type: 'name', val: name });
+      i = j;
+      continue;
+    }
+
+    // Number or keyword
+    if (/[-\d.]/.test(ch) || /[a-zA-Z*'"_]/.test(ch)) {
+      let j = i, tok = '';
+      while (j < n && !/[\s\/<>\[\](){}%]/.test(src[j])) { tok += src[j++]; }
+      if (tok === '') { i++; continue; }
+      if (/^-?[\d.]+$/.test(tok)) tokens.push({ type: 'number', val: parseFloat(tok) });
+      else tokens.push({ type: 'keyword', val: tok });
+      i = j;
+      continue;
+    }
+
+    i++; // skip unknown char
+  }
+  return tokens;
+}
+
+function parsePDFTokens(tokens, items) {
+  let inBT = false;
+  let curX = 0, curY = 0, leading = 0, fontSize = 12;
+  // Operand stack
+  const stack = [];
+
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i];
+
+    if (tok.type === 'number' || tok.type === 'string' || tok.type === 'array' || tok.type === 'name') {
+      stack.push(tok);
+      continue;
+    }
+
+    if (tok.type !== 'keyword') continue;
+    const kw = tok.val;
+
+    if (kw === 'BT') { inBT = true; stack.length = 0; continue; }
+    if (kw === 'ET') { inBT = false; stack.length = 0; continue; }
+    if (!inBT) { stack.length = 0; continue; }
+
+    switch (kw) {
+      case 'Tf': {
+        // /FontName size Tf — stack: [name, number]
+        const sz = stack.find(t => t.type === 'number');
+        if (sz) fontSize = sz.val;
+        break;
+      }
+      case 'TL': {
+        const tl = stack.find(t => t.type === 'number');
+        if (tl) leading = tl.val;
+        break;
+      }
+      case 'Td':
+      case 'TD': {
+        // tx ty Td
+        const nums = stack.filter(t => t.type === 'number');
+        if (nums.length >= 2) {
+          curX += nums[nums.length-2].val;
+          curY += nums[nums.length-1].val;
+        }
+        if (kw === 'TD' && nums.length >= 2) leading = -nums[nums.length-1].val;
+        break;
+      }
+      case 'Tm': {
+        // a b c d e f Tm
+        const nums = stack.filter(t => t.type === 'number');
+        if (nums.length >= 6) {
+          curX = nums[nums.length-2].val;
+          curY = nums[nums.length-1].val;
+        }
+        break;
+      }
+      case 'T*': {
+        curY -= leading;
+        break;
+      }
+      case 'Tj': {
+        const s = stack.find(t => t.type === 'string');
+        if (s) items.push({ text: s.val, x: curX, y: curY, h: fontSize });
+        break;
+      }
+      case 'TJ': {
+        const arr = stack.find(t => t.type === 'array');
+        if (arr) {
+          const txt = arr.val.filter(t => t.type === 'string').map(t => t.val).join('');
+          if (txt) items.push({ text: txt, x: curX, y: curY, h: fontSize });
+        }
+        break;
+      }
+      case "'": {
+        curY -= leading;
+        const s = stack.find(t => t.type === 'string');
+        if (s) items.push({ text: s.val, x: curX, y: curY, h: fontSize });
+        break;
+      }
+      case '"': {
+        const nums = stack.filter(t => t.type === 'number');
+        if (nums.length >= 2) leading = nums[1].val;
+        curY -= leading;
+        const s = stack.find(t => t.type === 'string');
+        if (s) items.push({ text: s.val, x: curX, y: curY, h: fontSize });
+        break;
+      }
+    }
+    stack.length = 0;
+  }
 }
 
 function findAnchor(items, searchText) {
   const lower = searchText.toLowerCase();
-  // Try to find item whose text contains the anchor string
+  // Single-item match
   for (const item of items) {
     if (item.text.toLowerCase().includes(lower)) return item;
   }
-  // Try matching across consecutive items (text split across operators)
-  let accumulated = '';
-  let startItem = null;
-  for (const item of items) {
-    if (!startItem) startItem = item;
-    accumulated += item.text.toLowerCase();
-    if (accumulated.includes(lower)) return startItem;
-    if (accumulated.length > lower.length * 3) {
-      accumulated = accumulated.slice(-lower.length * 2);
-      startItem = item;
+  // Multi-item match (text split across operators)
+  let buf = '', bufStart = 0;
+  for (let i = 0; i < items.length; i++) {
+    buf += items[i].text.toLowerCase();
+    if (buf.includes(lower)) return items[bufStart];
+    if (buf.length > lower.length * 4) {
+      buf = buf.slice(-lower.length * 2);
+      bufStart = i;
     }
   }
   return null;
 }
+
+// ── PDF DEBUGGER ──────────────────────────────────────────
+async function debugPdf(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const res = document.getElementById('dbg-results');
+  res.innerHTML = '<div class="loading-row"><div class="spin"></div>Analysing PDF…</div>';
+
+  try {
+    const ab = await file.arrayBuffer();
+    const pdfDoc = await PDFLib.PDFDocument.load(new Uint8Array(ab));
+    const pages  = pdfDoc.getPages();
+
+    let html = `<div class="dbg-status ok">✅ Loaded: ${pages.length} page(s) — ${file.name}</div>`;
+
+    const ANCHORS = ['alaadin yacout', 'approved by'];
+
+    for (let pi = 0; pi < pages.length; pi++) {
+      const pg    = pages[pi];
+      const items = extractTextItems(pg);
+      const { width, height } = pg.getSize();
+
+      html += `<div style="font-size:12px;font-weight:600;color:var(--ink-3);margin-top:14px;margin-bottom:6px">
+        Page ${pi+1} — ${width.toFixed(0)} × ${height.toFixed(0)} pt — ${items.length} text item(s)
+      </div>`;
+
+      if (!items.length) {
+        html += `<div class="dbg-status warn">⚠️ No text items found on this page. PDF may be image-based or stream could not be decoded.</div>`;
+        continue;
+      }
+
+      // Find anchors
+      const found = {};
+      for (const anchor of ANCHORS) {
+        const a = findAnchor(items, anchor);
+        if (a) found[anchor] = a;
+      }
+
+      if (Object.keys(found).length) {
+        for (const [anchor, a] of Object.entries(found)) {
+          html += `<div class="dbg-status ok">
+            🎯 Found anchor "<strong>${anchor}</strong>" → x=${a.x.toFixed(1)}, y=${a.y.toFixed(1)}, fontSize=${a.h.toFixed(1)}<br>
+            <span style="font-size:11px">Signature will be placed at y = ${(a.y + a.h + 8).toFixed(1)} (above) or y = ${(a.y - 50 - 8).toFixed(1)} (below)</span>
+          </div>`;
+        }
+      } else {
+        html += `<div class="dbg-status warn">⚠️ Anchor text not found on this page.</div>`;
+      }
+
+      // Show table of text items
+      html += `<table class="dbg-table" style="margin-top:8px">
+        <thead><tr><th>#</th><th>Text</th><th>X</th><th>Y</th><th>Size</th></tr></thead><tbody>`;
+      items.forEach((item, idx) => {
+        const isAnchor = ANCHORS.some(a => item.text.toLowerCase().includes(a));
+        html += `<tr${isAnchor ? ' class="highlight"' : ''}>
+          <td>${idx+1}</td>
+          <td>${esc(item.text.substring(0,60))}</td>
+          <td>${item.x.toFixed(1)}</td>
+          <td>${item.y.toFixed(1)}</td>
+          <td>${item.h.toFixed(1)}</td>
+        </tr>`;
+      });
+      html += '</tbody></table>';
+
+      // Show raw stream bytes (first 1000 chars)
+      try {
+        const rawBytes = getRawStreamBytes(pg);
+        if (rawBytes) {
+          const preview = new TextDecoder('latin1').decode(rawBytes).slice(0, 1200).replace(/</g,'&lt;');
+          html += `<div style="font-size:11px;font-weight:600;color:var(--ink-3);margin-top:10px;margin-bottom:4px">Raw content stream (first 1200 chars)</div>
+          <div class="dbg-raw">${preview}</div>`;
+        } else {
+          html += `<div class="dbg-status err">❌ Could not read raw stream bytes — stream access failed.</div>`;
+        }
+      } catch(_) {}
+    }
+
+    res.innerHTML = html;
+  } catch(e) {
+    res.innerHTML = `<div class="dbg-status err">❌ Error: ${esc(e.message)}</div>`;
+  }
+  input.value = '';
+}
+
 
 // ── AGENT RUN ────────────────────────────────────────────
 async function runAgent() {
@@ -1445,10 +1820,12 @@ function setNav(el, view) {
   const iv = document.getElementById('inbox-view');
   const pp = document.getElementById('pdf-panel');
   const gp = document.getElementById('guidelines-panel');
-  iv.style.display = (view==='pdf'||view==='guidelines') ? 'none' : 'flex';
+  const panels = ['pdf','guidelines','debug'];
+  iv.style.display = panels.includes(view) ? 'none' : 'flex';
   pp.classList.toggle('vis', view==='pdf');
   gp.classList.toggle('vis', view==='guidelines');
-  if (view!=='pdf'&&view!=='guidelines') renderEmailList(filterByNav(view));
+  document.getElementById('debug-panel').classList.toggle('vis', view==='debug');
+  if (!panels.includes(view)) renderEmailList(filterByNav(view));
 }
 
 // ── SIGNATURE & PDF ───────────────────────────────────────
