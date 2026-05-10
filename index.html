@@ -71,17 +71,34 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--ink-7);
+  background:
+    radial-gradient(ellipse 80% 60% at 20% 40%, rgba(26,108,240,0.18) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 80% at 80% 70%, rgba(11,143,106,0.14) 0%, transparent 55%),
+    radial-gradient(ellipse 90% 50% at 50% 10%, rgba(91,63,196,0.10) 0%, transparent 50%),
+    linear-gradient(135deg, #0f0f1a 0%, #0d1b2a 40%, #0a1628 70%, #0f1520 100%);
+  position: relative;
+  overflow: hidden;
+}
+#gate-screen::before {
+  content: '';
+  position: absolute; inset: 0;
+  background-image:
+    radial-gradient(circle, rgba(255,255,255,0.06) 1px, transparent 1px);
+  background-size: 32px 32px;
+  pointer-events: none;
 }
 .gate-card {
-  background: var(--white);
-  border: 1px solid var(--ink-6);
+  background: rgba(255,255,255,0.07);
+  border: 1px solid rgba(255,255,255,0.13);
   border-radius: var(--r-xl);
   padding: 44px 40px;
   width: 100%;
   max-width: 380px;
   text-align: center;
-  box-shadow: 0 2px 24px rgba(0,0,0,0.06);
+  box-shadow: 0 8px 48px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.1);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  position: relative; z-index: 1;
 }
 .gate-mark {
   width: 52px;
@@ -99,36 +116,38 @@ body {
 .gate-input {
   width: 100%;
   padding: 11px 14px;
-  border: 1px solid var(--ink-5);
+  border: 1px solid rgba(255,255,255,0.15);
   border-radius: var(--r);
   font-family: var(--mono);
   font-size: 16px;
   letter-spacing: 6px;
   text-align: center;
-  color: var(--ink);
-  background: var(--white);
+  color: white;
+  background: rgba(255,255,255,0.08);
   outline: none;
-  transition: border-color .15s;
+  transition: border-color .15s, background .15s;
   margin-bottom: 10px;
 }
-.gate-input:focus { border-color: var(--blue); }
+.gate-input::placeholder { color: rgba(255,255,255,0.25); }
+.gate-input:focus { border-color: var(--blue); background: rgba(255,255,255,0.12); }
 .gate-btn {
   width: 100%;
   padding: 11px;
   border-radius: var(--r);
-  background: var(--ink);
+  background: linear-gradient(135deg, var(--blue) 0%, #5b3fc4 100%);
   color: white;
   font-family: var(--font);
   font-size: 14px;
   font-weight: 500;
   border: none;
   cursor: pointer;
-  transition: background .12s, transform .08s;
+  transition: opacity .12s, transform .08s;
   letter-spacing: -.1px;
+  box-shadow: 0 4px 16px rgba(26,108,240,0.35);
 }
-.gate-btn:hover { background: #2a2a2a; }
+.gate-btn:hover { opacity: .9; }
 .gate-btn:active { transform: scale(.99); }
-.gate-err { font-size: 12px; color: var(--red); margin-top: 10px; display: none; }
+.gate-err { font-size: 12px; color: #f87171; margin-top: 10px; display: none; }
 
 /* ── LOGIN ── */
 #login-screen {
@@ -136,32 +155,49 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--ink-7);
+  background:
+    radial-gradient(ellipse 80% 60% at 20% 40%, rgba(26,108,240,0.18) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 80% at 80% 70%, rgba(11,143,106,0.14) 0%, transparent 55%),
+    radial-gradient(ellipse 90% 50% at 50% 10%, rgba(91,63,196,0.10) 0%, transparent 50%),
+    linear-gradient(135deg, #0f0f1a 0%, #0d1b2a 40%, #0a1628 70%, #0f1520 100%);
+  position: relative;
+  overflow: hidden;
+}
+#login-screen::before {
+  content: '';
+  position: absolute; inset: 0;
+  background-image: radial-gradient(circle, rgba(255,255,255,0.06) 1px, transparent 1px);
+  background-size: 32px 32px;
+  pointer-events: none;
 }
 .login-card {
-  background: var(--white);
-  border: 1px solid var(--ink-6);
+  background: rgba(255,255,255,0.07);
+  border: 1px solid rgba(255,255,255,0.13);
   border-radius: var(--r-xl);
   padding: 44px 40px;
   width: 100%;
   max-width: 420px;
-  box-shadow: 0 2px 24px rgba(0,0,0,0.06);
+  box-shadow: 0 8px 48px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.1);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  position: relative; z-index: 1;
 }
 .login-mark {
   width: 48px;
   height: 48px;
-  background: var(--blue);
+  background: linear-gradient(135deg, var(--blue) 0%, #5b3fc4 100%);
   border-radius: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
   margin-bottom: 20px;
+  box-shadow: 0 4px 20px rgba(26,108,240,0.4);
 }
 .login-mark svg { width: 22px; height: 22px; fill: white; }
-.login-h { font-size: 22px; font-weight: 600; letter-spacing: -.4px; margin-bottom: 7px; }
-.login-s { font-size: 13px; color: var(--ink-3); line-height: 1.65; margin-bottom: 26px; }
+.login-h { font-size: 22px; font-weight: 600; letter-spacing: -.4px; margin-bottom: 7px; color: white; }
+.login-s { font-size: 13px; color: rgba(255,255,255,0.55); line-height: 1.65; margin-bottom: 26px; }
 .features { display: flex; flex-direction: column; gap: 9px; margin-bottom: 28px; }
-.feat { display: flex; align-items: center; gap: 11px; font-size: 13px; color: var(--ink-3); }
+.feat { display: flex; align-items: center; gap: 11px; font-size: 13px; color: rgba(255,255,255,0.6); }
 .feat-dot {
   width: 30px; height: 30px;
   border-radius: 8px;
@@ -176,9 +212,9 @@ body {
 .ms-btn {
   width: 100%;
   padding: 12px 16px;
-  border: 1px solid var(--ink-5);
+  border: 1px solid rgba(255,255,255,0.2);
   border-radius: var(--r);
-  background: var(--white);
+  background: rgba(255,255,255,0.95);
   color: var(--ink);
   font-family: var(--font);
   font-size: 14px;
@@ -188,12 +224,13 @@ body {
   align-items: center;
   justify-content: center;
   gap: 10px;
-  transition: background .12s, border-color .12s;
+  transition: background .12s, transform .08s;
   letter-spacing: -.1px;
 }
-.ms-btn:hover { background: var(--ink-8); border-color: var(--ink-4); }
+.ms-btn:hover { background: white; transform: translateY(-1px); }
+.ms-btn:active { transform: translateY(0); }
 .ms-btn svg { width: 18px; height: 18px; }
-.login-note { font-size: 11px; color: var(--ink-4); text-align: center; margin-top: 13px; }
+.login-note { font-size: 11px; color: rgba(255,255,255,0.35); text-align: center; margin-top: 13px; }
 .err-box {
   background: var(--red-soft);
   border: 1px solid var(--red-border);
@@ -1176,21 +1213,27 @@ async function findSignatureLocationWithClaude(pdfBase64, isPO, isOBD, pdfLibPag
 
   content.push({
     type: 'text',
-    text: `This is a PDF document with ${numPages} page(s). I need to place a signature image ${target}.
+    text: `These are the last ${pageImages.length} page(s) of a PDF document (shown in order). I need to place a signature image ${target}.
 
-Please find the correct location and return ONLY a JSON object with no other text:
+Look carefully at the pages. Find the block that contains:
+- The name "Alaadin Yacout" (may appear as "Alaadin Yacout" or "ALAADIN YACOUT")
+- It is typically on the LEFT side of the page in a signature/sign-off block
+- Below "Sincerely," or similar closing text
+- The signature must be placed IN THE EMPTY SPACE DIRECTLY ABOVE the name "Alaadin Yacout"
+
+Return ONLY a valid JSON object, no markdown, no explanation outside the JSON:
 {
-  "pageIndex": <0-based page number where the signature should go>,
-  "xPct": <X position as percentage 0-100 from left edge of that page>,
-  "yPct": <Y position as percentage 0-100 from TOP edge of that page>,
-  "reasoning": "<one sentence explaining what you found>"
+  "pageIndex": <0-based index into the FULL PDF — if you see 2 pages and the name is on the FIRST of the two shown, that is page index ${Math.max(0, numPages - 2)}, if on the SECOND it is page index ${numPages - 1}>,
+  "xPct": <X percentage 0-100 from LEFT edge of the page where the LEFT edge of the signature should start — align with the left edge of "Alaadin Yacout" text>,
+  "yPct": <Y percentage 0-100 from TOP of the page where the TOP of the signature should sit — place it so the signature bottom is just above the "Alaadin Yacout" name line>,
+  "reasoning": "<what you found and where>"
 }
 
-Important notes:
-- xPct and yPct refer to where the BOTTOM-LEFT corner of the signature should be placed
-- For "above Alaadin Yacout": place the signature so it sits just above his name text
-- Return the page where the relevant text actually appears
-- If you cannot find the specific text, place at bottom-left of the last page (xPct:5, yPct:85)`
+Critical rules:
+- yPct must place the signature ABOVE the name, not on it — subtract enough space for the signature height (~4% of page height)
+- xPct should align with the left margin of the "Alaadin Yacout" text block (typically 5-15%)
+- If "Alaadin Yacout" appears around 30% from top, then yPct for the signature top should be around 24-27%
+- pageIndex is 0-based for the FULL document, not just the pages shown`
   });
 
   // Call Claude API
@@ -1530,12 +1573,19 @@ async function signAndSend(id, placement) {
     //   3. Return the first address that is NOT alaadinyacout@gulfmedical.com.
     //   4. Fall back to e.email only if every address in the thread is Alaadin's.
     //
-    // Block only @gulfmedical.com domain
+    // Never send to these addresses — blocks loops
     const ALAADIN_EMAIL = 'alaadinyacout@gulfmedical.com';
+    const BLOCKED_ADDRESSES = [
+      '@gulfmedical.com',       // entire domain blocked
+      'alaadin0077@outlook.com' // personal address — would cause a loop
+    ];
 
     function isAlaadin(addr) {
       if (!addr) return false;
-      return addr.toLowerCase().endsWith('@gulfmedical.com');
+      const lower = addr.toLowerCase();
+      if (lower.endsWith('@gulfmedical.com')) return true;
+      if (lower === 'alaadin0077@outlook.com') return true;
+      return false;
     }
 
     // Extract all email addresses from a plain-text body (handles forwarded headers)
@@ -1632,27 +1682,34 @@ async function signAndSend(id, placement) {
       return null;
     }
 
-    toast('🔍 Resolving recipient…');
-
-    const resolved = await resolveRealRecipient();
-
-    // Check if user typed a manual recipient in the input field
+    // ── Check manual recipient input FIRST — it always wins ────
     const manualInput = document.getElementById('manual-recipient');
     const manualValue = manualInput ? manualInput.value.trim() : '';
 
     let recipientAddress, recipientName;
 
-    if (resolved) {
-      recipientAddress = resolved.address;
-      recipientName    = resolved.name || resolved.address.split('@')[0];
-    } else if (manualValue && manualValue.includes('@')) {
-      // User provided recipient manually
+    if (manualValue && manualValue.includes('@')) {
+      // User explicitly typed an address — but still block loop addresses
+      if (isAlaadin(manualValue)) {
+        toast('⛔ ' + manualValue + ' is blocked to prevent a loop. Please enter the supplier address.');
+        if (manualInput) manualInput.focus();
+        return;
+      }
       recipientAddress = manualValue;
       recipientName    = manualValue.split('@')[0];
+      toast('📤 Sending to manually entered recipient…');
     } else {
-      toast('⚠️ Could not detect recipient. Please type the email address in the "Send to" field.');
-      if (manualInput) manualInput.focus();
-      return;
+      // No manual input — run auto-detection
+      toast('🔍 Resolving recipient from thread…');
+      const resolved = await resolveRealRecipient();
+      if (resolved) {
+        recipientAddress = resolved.address;
+        recipientName    = resolved.name || resolved.address.split('@')[0];
+      } else {
+        toast('⚠️ Could not detect recipient. Please type the email address in the "Send to" field.');
+        if (manualInput) manualInput.focus();
+        return;
+      }
     }
 
     const greetingName = (recipientName.split(' ')[0]) || 'Sir/Madam';
