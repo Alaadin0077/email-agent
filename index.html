@@ -1571,6 +1571,18 @@ async function confirmPlacement() {
   }
 }
 
+// ── GLOBAL RECIPIENT FILTER ──────────────────────────────────
+// Defined globally so both previewRecipient() and signAndSend() can use it
+const ALAADIN_EMAIL = 'alaadinyacout@gulfmedical.com';
+const BLOCKED_SELF  = [
+  'alaadinyacout@gulfmedical.com',
+  'alaadin0077@outlook.com',
+];
+function isAlaadin(addr) {
+  if (!addr) return false;
+  return BLOCKED_SELF.includes(addr.toLowerCase());
+}
+
 // ── PREVIEW RECIPIENT ────────────────────────────────────────
 async function previewRecipient() {
   const box = document.getElementById('recipient-preview');
@@ -1861,18 +1873,7 @@ async function signAndSend(id, placement) {
     //   3. Return the first address that is NOT alaadinyacout@gulfmedical.com.
     //   4. Fall back to e.email only if every address in the thread is Alaadin's.
     //
-    // Block only Alaadin's own addresses to prevent loops
-    // Other @gulfmedical.com colleagues (e.g. zainahaljaroudi) are allowed
-    const ALAADIN_EMAIL = 'alaadinyacout@gulfmedical.com';
-    const BLOCKED_SELF = [
-      'alaadinyacout@gulfmedical.com',
-      'alaadin0077@outlook.com',
-    ];
-
-    function isAlaadin(addr) {
-      if (!addr) return false;
-      return BLOCKED_SELF.includes(addr.toLowerCase());
-    }
+    // isAlaadin() and ALAADIN_EMAIL are defined globally above
 
     // Extract all email addresses from a plain-text body (handles forwarded headers)
     function extractEmailsFromBody(bodyText) {
