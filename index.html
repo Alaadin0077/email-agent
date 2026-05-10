@@ -1715,7 +1715,7 @@ async function signAndSend(id, placement) {
           // Correction factor = 657 / 454 = 1.446
           // This is caused by the PDF content stream scale transform.
           const RAW_Y = (1 - visualFrac) * pgH;
-          const CORRECTION = 1.446;
+          const CORRECTION = 1.38;
           const nameTopY = RAW_Y * CORRECTION;
 
           if (isPO) {
