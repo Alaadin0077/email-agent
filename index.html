@@ -1622,7 +1622,7 @@ async function previewRecipient() {
 
     const convId = msgMeta.conversationId;
     if (convId) {
-      const td = await graphGet('/me/messages?$filter=conversationId eq \'' + convId + '\'&$orderby=receivedDateTime asc&$select=from,toRecipients,ccRecipients&$top=50');
+      const td = await graphGet('/me/messages?$filter=conversationId eq \'' + convId + '\'&$select=from,toRecipients,ccRecipients&$top=50');
       for (const msg of td.value || []) {
         addIfOk(msg.from?.emailAddress?.address, msg.from?.emailAddress?.name, 'Thread From:');
         for (const r of [...(msg.toRecipients||[]), ...(msg.ccRecipients||[])]) {
@@ -1923,7 +1923,6 @@ async function signAndSend(id, placement) {
         if (convId) {
           const threadData = await graphGet(
             `/me/messages?$filter=conversationId eq '${convId}'` +
-            `&$orderby=receivedDateTime asc` +
             `&$select=from,toRecipients,ccRecipients` +
             `&$top=50`
           );
@@ -2041,6 +2040,19 @@ async function signAndSend(id, placement) {
     }
 
     toast('✅ Signed PDF sent to ' + recipientName + '!');
+
+    // Move the original email back to Inbox if Outlook auto-archived it
+    try {
+      await fetch('https://graph.microsoft.com/v1.0/me/messages/' + enc + '/move', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ destinationId: 'inbox' })
+      });
+      console.log('[post-send] email kept/moved to inbox');
+    } catch(moveErr) {
+      console.warn('[post-send] could not move to inbox:', moveErr.message);
+    }
+
     e.action = 'done'; e.tags = e.tags.filter(t => t !== 'sign');
     updateBadges(); renderEmailList(filterByNav(curNav));
     document.getElementById('detail-panel').innerHTML = '<div class="detail-empty"><div class="d-icon">✅</div><p>Signed PDF sent successfully</p></div>';
