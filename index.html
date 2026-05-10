@@ -1581,19 +1581,22 @@ async function signAndSend(id, placement) {
     const enc = encodeURIComponent(targetId);
 
     // ── 1. Find the PDF attachment ────────────────────────────
-    // If called from modal, we already have the pdf-lib doc — reuse it.
-    let pdfDoc, fullAttach;
+    // fetchValidPdf returns already-decoded bytes — pass directly to pdf-lib.
+    let pdfDoc, pdfName, pdfBase64;
     if (placement && modalPdfDoc && modalEmailId === targetId) {
-      pdfDoc = modalPdfDoc;
-      // We still need fullAttach for the name — fetch meta only (no contentBytes needed)
-      const attachList = await graphGet(`/me/messages/${enc}/attachments`);
-      const pdfMeta = attachList.value?.find(a => a.name?.toLowerCase().endsWith('.pdf'));
-      fullAttach = { name: pdfMeta?.name || 'document.pdf', contentBytes: modalPdfBase64 };
+      // Reuse already-loaded doc from modal
+      pdfDoc    = modalPdfDoc;
+      pdfName   = modalAttachName;
+      pdfBase64 = modalPdfBase64;
     } else {
       const pdf = await fetchValidPdf(enc);
-      fullAttach = { name: pdf.name, contentBytes: pdf.base64 };
+      pdfName   = pdf.name;
+      pdfBase64 = pdf.base64;
+      // pdf.bytes are already decoded raw bytes — load directly, no re-decode
       pdfDoc = await PDFLib.PDFDocument.load(pdf.bytes);
     }
+    // Keep fullAttach name for the outgoing attachment
+    const fullAttach = { name: pdfName, contentBytes: pdfBase64 };
 
     // ── 2. Detect document type from subject + body ───────────
     const context = (e.subject + ' ' + e.body).toUpperCase();
