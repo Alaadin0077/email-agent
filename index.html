@@ -1668,83 +1668,78 @@ async function signAndSend(id, placement) {
       const FIXED_X = tW * 0.05;
 
       if (isPO || isOBD) {
-        // X is always fixed (left margin).
-        // Y: we scan the text to get the raw anchor coordinate, then compute
-        // the ratio of that anchor within ALL raw Y values on the page.
-        // Because this PDF's content stream uses a scale transform, raw Y
-        // values don't map linearly — but the RATIO between text items is
-        // preserved. We then apply that ratio to the page height.
-        //
-        // Key calibration from observed signed PDFs:
-        //   "Alaadin Yacout" appears visually at ~22% from top of page.
-        //   The text extractor finds it in the raw stream.
-        //   We use its ratio among ALL items to find true visual Y.
+        // Use PDF.js getTextContent() which returns EXACT coordinates in
+        // PDF user space (bottom-left origin, same as pdf-lib).
+        // This works correctly regardless of content-stream transforms.
 
         const anchorText = isPO ? 'alaadin yacout' : 'approved by';
         let autoSigY = null;
         let autoPageIdx = pages.length - 1;
 
-        for (let pi = pages.length - 1; pi >= Math.max(0, pages.length - 2); pi--) {
-          const pg    = pages[pi];
-          const { height: pgH } = pg.getSize();
-          const items = extractTextItems(pg);
-          if (!items.length) continue;
-          const anchor = findAnchor(items, anchorText);
-          if (!anchor) continue;
+        try {
+          const pdfjsDoc2 = await pdfjsLib.getDocument({
+            data: Uint8Array.from(
+              atob(fullAttach.contentBytes.replace(/\s/g, '')),
+              ch => ch.charCodeAt(0)
+            )
+          }).promise;
 
-          // Sort all items by raw Y to get a ranked position.
-          // In this PDF raw Y increases downward (top=small, bottom=large).
-          // We find where the anchor sits in the sorted order → visual rank.
-          const sortedY = [...items].sort((a, b) => a.y - b.y); // top→bottom
-          const anchorRank = sortedY.findIndex(i =>
-            i.text.toLowerCase().includes(anchorText) ||
-            (i.x === anchor.x && i.y === anchor.y)
-          );
-          const totalItems = sortedY.length;
+          const total    = pdfjsDoc2.numPages;
+          const startPg  = Math.max(1, total - 1); // last 2 pages only
 
-          // Visual fraction from top (0=top, 1=bottom)
-          const visualFrac = anchorRank >= 0
-            ? anchorRank / (totalItems - 1)
-            : (anchor.y - Math.min(...items.map(i=>i.y))) /
-              (Math.max(...items.map(i=>i.y)) - Math.min(...items.map(i=>i.y)) || 1);
+          for (let pi = total; pi >= startPg; pi--) {
+            const pdfjsPg    = await pdfjsDoc2.getPage(pi);
+            const textContent = await pdfjsPg.getTextContent();
+            const pdfLibPg   = pages[pi - 1];
+            const { height: pgH } = pdfLibPg.getSize();
 
-          // Convert to pdf-lib Y (from bottom).
-          //
-          // Calibration: the raw normalisation gives ~454pt for a position that
-          // is visually at ~657pt (22% from top on 842pt page).
-          // Correction factor = 657 / 454 = 1.446
-          // This is caused by the PDF content stream scale transform.
-          const RAW_Y = (1 - visualFrac) * pgH;
-          const CORRECTION = 1.32;
-          const nameTopY = RAW_Y * CORRECTION;
+            // Accumulate items to handle anchor split across spans
+            let buf = '', anchorItem = null;
+            for (const item of textContent.items) {
+              buf += (item.str || '').toLowerCase();
+              if (buf.includes(anchorText)) {
+                anchorItem = item;
+                break;
+              }
+              if (buf.length > anchorText.length * 4) {
+                buf = buf.slice(-anchorText.length * 2);
+              }
+            }
 
-          if (isPO) {
-            // Signature sits just ABOVE the name
-            autoSigY = Math.min(nameTopY + 4, pgH - sigH - 10);
-          } else {
-            // OBD: signature sits just BELOW the label
-            autoSigY = nameTopY - sigH - 4;
+            if (!anchorItem) continue;
+
+            // transform[4]=x, transform[5]=y  — both in PDF user space (pt, bottom-left)
+            const pdfY  = anchorItem.transform[5];
+            const itemH = anchorItem.height || 12;
+
+            console.log('[pdfjs] anchor:', anchorText,
+              'x:', anchorItem.transform[4].toFixed(1),
+              'y:', pdfY.toFixed(1), 'h:', itemH.toFixed(1), 'pgH:', pgH.toFixed(1));
+
+            if (isPO) {
+              // Sig bottom = just above the name top (pdfY + itemH)
+              autoSigY = pdfY + itemH + 4;
+            } else {
+              // Sig top = just below label bottom (pdfY)
+              autoSigY = pdfY - sigH - 4;
+            }
+            autoPageIdx = pi - 1;
+            break;
           }
-
-          autoPageIdx = pi;
-          console.log('[placement] anchor:', anchorText,
-            'rank:', anchorRank, '/', totalItems,
-            'visualFrac:', visualFrac.toFixed(3),
-            'nameTopY:', nameTopY.toFixed(1),
-            'sigY:', autoSigY.toFixed(1), 'pgH:', pgH.toFixed(1));
-          break;
+        } catch(err) {
+          console.warn('[pdfjs placement] failed:', err.message);
         }
 
         if (autoSigY !== null) {
           targetPageIndex = autoPageIdx;
           sigX = FIXED_X;
           sigY = autoSigY;
+          console.log('[placement] sigX:', sigX.toFixed(1), 'sigY:', sigY.toFixed(1));
         } else {
-          // Fallback: hardcoded to ~22% from top (observed position)
-          console.warn('[placement] anchor not found, using hardcoded fallback');
+          console.warn('[placement] fallback used');
           targetPageIndex = pages.length - 1;
           sigX = FIXED_X;
-          sigY = isPO ? tH * 0.78 : tH * 0.65;  // 78% from bottom = 22% from top
+          sigY = isPO ? tH * 0.72 : tH * 0.65;
         }
 
       } else {
@@ -1778,19 +1773,17 @@ async function signAndSend(id, placement) {
     //   3. Return the first address that is NOT alaadinyacout@gulfmedical.com.
     //   4. Fall back to e.email only if every address in the thread is Alaadin's.
     //
-    // Never send to these addresses — blocks loops
+    // Block only Alaadin's own addresses to prevent loops
+    // Other @gulfmedical.com colleagues (e.g. zainahaljaroudi) are allowed
     const ALAADIN_EMAIL = 'alaadinyacout@gulfmedical.com';
-    const BLOCKED_ADDRESSES = [
-      '@gulfmedical.com',       // entire domain blocked
-      'alaadin0077@outlook.com' // personal address — would cause a loop
+    const BLOCKED_SELF = [
+      'alaadinyacout@gulfmedical.com',
+      'alaadin0077@outlook.com',
     ];
 
     function isAlaadin(addr) {
       if (!addr) return false;
-      const lower = addr.toLowerCase();
-      if (lower.endsWith('@gulfmedical.com')) return true;
-      if (lower === 'alaadin0077@outlook.com') return true;
-      return false;
+      return BLOCKED_SELF.includes(addr.toLowerCase());
     }
 
     // Extract all email addresses from a plain-text body (handles forwarded headers)
