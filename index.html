@@ -1112,9 +1112,10 @@ async function selectEmail(id) {
           <div style="font-size:10px;color:var(--ink-4);margin-top:3px">Agent will auto-detect from thread. Override here if needed.</div>
         </div>
         <div class="d-actions">
-          <button class="dact" onclick="setNav(document.querySelectorAll('.nav-item')[10],'pdf')">📁 Upload signature</button>
+          <button class="dact" onclick="previewRecipient()">🔍 Who will receive?</button>
           <button class="dact sign-send" onclick="signAndSend()" ${ready?'':'disabled'}>✍️ Sign &amp; send</button>
         </div>
+        <div id="recipient-preview" style="display:none;margin-top:8px;padding:10px 12px;background:var(--d-raised);border:1px solid var(--d-border2);border-radius:var(--r);font-size:12px;line-height:1.6"></div>
       </div>`;
   } else {
     aiBlock = `<div class="ai-panel"><div class="action-chip none">ℹ️ No action required</div></div>`;
@@ -1567,6 +1568,93 @@ async function confirmPlacement() {
     toast('❌ ' + err.message);
     document.getElementById('modal-confirm-btn').disabled = false;
     document.getElementById('modal-confirm-btn').textContent = '✍️ Sign & Send';
+  }
+}
+
+// ── PREVIEW RECIPIENT ────────────────────────────────────────
+async function previewRecipient() {
+  const box = document.getElementById('recipient-preview');
+  if (!box) return;
+  const e = allEmails.find(x => x.id === selId);
+  if (!e) { toast('Select an email first.'); return; }
+
+  box.style.display = 'block';
+  box.innerHTML = '<span style="color:var(--d-text3)">🔍 Resolving…</span>';
+
+  try {
+    const enc = encodeURIComponent(selId);
+
+    // Manual override takes priority
+    const manualInput = document.getElementById('manual-recipient');
+    const manualValue = manualInput ? manualInput.value.trim() : '';
+    if (manualValue && manualValue.includes('@')) {
+      if (isAlaadin(manualValue)) {
+        box.innerHTML = '<div style="color:#f87171;font-weight:600">⛔ ' + esc(manualValue) + ' is blocked (loop prevention)</div>';
+      } else {
+        box.innerHTML = '<div style="color:#4ade80;font-weight:600">✅ Manual override — will send to:</div>'
+          + '<div style="margin-top:6px">📤 <b>To:</b> ' + esc(manualValue) + '</div>'
+          + '<div>📋 <b>CC:</b> alaadinyacout@gulfmedical.com</div>';
+      }
+      return;
+    }
+
+    // Auto-detect candidates
+    const candidates = [];
+    const msgMeta = await graphGet('/me/messages/' + enc + '?$select=conversationId,from,toRecipients,ccRecipients,body');
+
+    const addIfOk = (a, n, src) => { if (a && !isAlaadin(a)) candidates.push({ address: a, name: n, source: src }); };
+
+    for (const r of msgMeta.toRecipients || []) addIfOk(r.emailAddress?.address, r.emailAddress?.name, 'To:');
+    for (const r of msgMeta.ccRecipients || []) addIfOk(r.emailAddress?.address, r.emailAddress?.name, 'CC:');
+    addIfOk(msgMeta.from?.emailAddress?.address, msgMeta.from?.emailAddress?.name, 'From:');
+
+    const convId = msgMeta.conversationId;
+    if (convId) {
+      const td = await graphGet('/me/messages?$filter=conversationId eq \'' + convId + '\'&$orderby=receivedDateTime asc&$select=from,toRecipients,ccRecipients&$top=50');
+      for (const msg of td.value || []) {
+        addIfOk(msg.from?.emailAddress?.address, msg.from?.emailAddress?.name, 'Thread From:');
+        for (const r of [...(msg.toRecipients||[]), ...(msg.ccRecipients||[])]) {
+          addIfOk(r.emailAddress?.address, r.emailAddress?.name, 'Thread:');
+        }
+      }
+    }
+
+    const bodyText = (msgMeta.body?.content||'').replace(/<[^>]+>/g,' ');
+    const bodyEmails = (bodyText.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g)||[]);
+    for (const be of bodyEmails) addIfOk(be, '', 'Body:');
+
+    // Deduplicate
+    const seen = new Set();
+    const unique = candidates.filter(cand => {
+      const l = cand.address.toLowerCase();
+      if (seen.has(l)) return false;
+      seen.add(l); return true;
+    });
+
+    if (!unique.length) {
+      box.innerHTML = '<div style="color:#f87171;font-weight:600">⚠️ No external recipient found</div>'
+        + '<div style="color:var(--d-text2);margin-top:4px">Enter the recipient manually in the field above.</div>';
+      return;
+    }
+
+    const chosen = unique[0];
+    const others  = unique.slice(1, 5);
+    box.innerHTML =
+      '<div style="color:#4ade80;font-weight:600;margin-bottom:6px">✅ Agent will send to:</div>'
+      + '<div>📤 <b>To:</b> <span style="color:var(--d-text)">'
+        + esc(chosen.name ? chosen.name + ' <' + chosen.address + '>' : chosen.address)
+        + '</span> <span style="color:var(--d-text3);font-size:10px">(' + chosen.source + ')</span></div>'
+      + '<div>📋 <b>CC:</b> <span style="color:var(--d-text3)">alaadinyacout@gulfmedical.com</span></div>'
+      + (others.length
+          ? '<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--d-border);font-size:11px;color:var(--d-text3)">'
+            + 'Other addresses found (not used):<br>'
+            + others.map(o => '• ' + esc(o.address) + ' <span style="opacity:.6">(' + o.source + ')</span>').join('<br>')
+            + '</div>'
+          : '')
+      + '<div style="margin-top:6px;font-size:10px;color:var(--d-text3)">If wrong, type the correct address in the field above.</div>';
+
+  } catch(err) {
+    box.innerHTML = '<div style="color:#f87171">❌ ' + esc(err.message) + '</div>';
   }
 }
 
