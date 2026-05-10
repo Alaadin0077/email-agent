@@ -1163,17 +1163,17 @@ async function signAndSend(id) {
 
     // ── 4. Determine which page + X/Y placement ─────────────────
     //
-    // pdf-lib uses bottom-left origin (y=0 is bottom of page).
+    // IMPORTANT: Many PDFs apply a content-stream transform (cm operator)
+    // that scales all coordinates. For example, a page that is 595×842 pt
+    // may have text at y=5603 because the stream uses a 0.07× scale.
+    // We must detect the CTM (current transformation matrix) from the cm
+    // operators in the raw stream and use it to map raw text coordinates
+    // into actual page-space coordinates before placing the signature.
     //
     // Strategy:
     //   PO  → search ALL pages for "Alaadin Yacout"; place sig ABOVE that text.
     //   OBD → search ALL pages for "Approved by";    place sig BELOW that text.
     //   Default → bottom-right of last page.
-    //
-    // Text extraction: we decode each page's raw content stream bytes as
-    // latin-1 and parse PDF text operators (BT/ET, Tf, Td/TD/Tm, Tj/TJ).
-    // This works for standard digitally-created PDFs. For scanned/image PDFs
-    // the anchor won't be found and we fall back gracefully.
 
     let targetPageIndex = pages.length - 1; // default: last page
     let sigX = width - sigW - 50;
@@ -1193,14 +1193,28 @@ async function signAndSend(id) {
           found = true;
           targetPageIndex = pi;
 
+          // Detect the CTM scale/translate from cm operators in this page's stream
+          // so we can convert raw content-stream coordinates → page-space coordinates.
+          const ctm = detectPageCTM(pg);
+
+          // Map raw anchor coordinates through CTM → page space
+          // CTM is [a, b, c, d, e, f] where:
+          //   page_x = a*raw_x + c*raw_y + e
+          //   page_y = b*raw_x + d*raw_y + f
+          const pageAnchorX = ctm.a * anchor.x + ctm.c * anchor.y + ctm.e;
+          const pageAnchorY = ctm.b * anchor.x + ctm.d * anchor.y + ctm.f;
+          // Font size is also scaled
+          const pageAnchorH = anchor.h * Math.sqrt(ctm.a * ctm.a + ctm.b * ctm.b);
+
           if (isPO) {
-            // Place sig so its BOTTOM is ~8pt above the anchor's baseline
-            sigX = anchor.x;
-            sigY = anchor.y + anchor.h + 8;   // anchor.y is baseline; add fontSize height
+            // Place sig so its bottom sits just above "Alaadin Yacout"
+            // In PDF space y increases upward, so "above" = higher y value
+            sigX = pageAnchorX;
+            sigY = pageAnchorY + pageAnchorH + 4;
           } else {
-            // OBD: place sig so its TOP is ~8pt below the anchor's bottom
-            sigX = anchor.x;
-            sigY = anchor.y - sigH - 8;
+            // OBD: place sig just below "Approved by"
+            sigX = pageAnchorX;
+            sigY = pageAnchorY - sigH - 4;
           }
 
           // Clamp within page bounds
@@ -1363,6 +1377,56 @@ async function signAndSend(id) {
 // Returns array of { text, x, y, h } — coordinates in PDF user space
 // (bottom-left origin, y increases upward).
 //
+
+// ── detectPageCTM ────────────────────────────────────────
+// Read the raw content stream of a page and find the FIRST 'cm' operator.
+// Returns the 6-element CTM [a,b,c,d,e,f] that maps content-stream
+// coordinates → page-space coordinates.
+// If no cm is found, returns the identity matrix [1,0,0,1,0,0].
+//
+// From the debugger screenshot we can see the raw stream contains:
+//   591.85 0 0 228.25 2 307 cm
+// This means: scaleX=591.85, scaleY=228.25, translateX=2, translateY=307
+// But text Y values reach ~11000 meaning MULTIPLE cm operators stack up.
+// We collect ALL cm operators and multiply them together (matrix concatenation).
+//
+function detectPageCTM(page) {
+  const identity = { a:1, b:0, c:0, d:1, e:0, f:0 };
+  try {
+    const rawBytes = getRawStreamBytes(page);
+    if (!rawBytes) return identity;
+    const src = new TextDecoder('latin1').decode(rawBytes);
+
+    // Multiply two CTM matrices: result = m1 * m2
+    function matMul(m1, m2) {
+      return {
+        a: m1.a*m2.a + m1.b*m2.c,
+        b: m1.a*m2.b + m1.b*m2.d,
+        c: m1.c*m2.a + m1.d*m2.c,
+        d: m1.c*m2.b + m1.d*m2.d,
+        e: m1.e*m2.a + m1.f*m2.c + m2.e,
+        f: m1.e*m2.b + m1.f*m2.d + m2.f,
+      };
+    }
+
+    // Extract all numbers that precede a 'cm' keyword
+    // Pattern: 6 numbers followed by 'cm'
+    const cmRe = /(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+cm/g;
+    let ctm = identity;
+    let match;
+    while ((match = cmRe.exec(src)) !== null) {
+      const m = {
+        a: parseFloat(match[1]), b: parseFloat(match[2]),
+        c: parseFloat(match[3]), d: parseFloat(match[4]),
+        e: parseFloat(match[5]), f: parseFloat(match[6]),
+      };
+      ctm = matMul(ctm, m);
+    }
+    return ctm;
+  } catch(_) {
+    return identity;
+  }
+}
 
 function getRawStreamBytes(page) {
   // pdf-lib 1.x stores content streams differently depending on how the PDF
@@ -1753,11 +1817,25 @@ async function debugPdf(input) {
         if (a) found[anchor] = a;
       }
 
+      // Detect CTM for this page
+      const ctm = detectPageCTM(pg);
+      const isIdentity = Math.abs(ctm.a - 1) < 0.001 && Math.abs(ctm.d - 1) < 0.001 && Math.abs(ctm.e) < 0.001 && Math.abs(ctm.f) < 0.001;
+      html += `<div class="dbg-status ${isIdentity ? 'ok' : 'warn'}" style="font-size:11px">
+        📐 CTM: a=${ctm.a.toFixed(4)} b=${ctm.b.toFixed(4)} c=${ctm.c.toFixed(4)} d=${ctm.d.toFixed(4)} e=${ctm.e.toFixed(1)} f=${ctm.f.toFixed(1)}
+        ${isIdentity ? '(identity — no scaling)' : '(scaled/transformed — coordinates will be mapped)'}
+      </div>`;
+
       if (Object.keys(found).length) {
         for (const [anchor, a] of Object.entries(found)) {
+          // Map through CTM
+          const px = ctm.a * a.x + ctm.c * a.y + ctm.e;
+          const py = ctm.b * a.x + ctm.d * a.y + ctm.f;
+          const ph = a.h * Math.sqrt(ctm.a * ctm.a + ctm.b * ctm.b);
           html += `<div class="dbg-status ok">
-            🎯 Found anchor "<strong>${anchor}</strong>" → x=${a.x.toFixed(1)}, y=${a.y.toFixed(1)}, fontSize=${a.h.toFixed(1)}<br>
-            <span style="font-size:11px">Signature will be placed at y = ${(a.y + a.h + 8).toFixed(1)} (above) or y = ${(a.y - 50 - 8).toFixed(1)} (below)</span>
+            🎯 Found anchor "<strong>${anchor}</strong>"<br>
+            Raw coords: x=${a.x.toFixed(1)}, y=${a.y.toFixed(1)}, fontSize=${a.h.toFixed(1)}<br>
+            Page-space: x=${px.toFixed(1)}, y=${py.toFixed(1)}, fontSize≈${ph.toFixed(1)}<br>
+            <span style="font-size:11px">Signature will be placed at page y = ${(py + ph + 4).toFixed(1)} (above name)</span>
           </div>`;
         }
       } else {
