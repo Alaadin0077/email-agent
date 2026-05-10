@@ -1668,9 +1668,19 @@ async function signAndSend(id, placement) {
       const FIXED_X = tW * 0.05;
 
       if (isPO || isOBD) {
-        const anchorText = isPO ? 'alaadin yacout' : 'approved by';
+        // X is always fixed (left margin).
+        // Y: we scan the text to get the raw anchor coordinate, then compute
+        // the ratio of that anchor within ALL raw Y values on the page.
+        // Because this PDF's content stream uses a scale transform, raw Y
+        // values don't map linearly — but the RATIO between text items is
+        // preserved. We then apply that ratio to the page height.
+        //
+        // Key calibration from observed signed PDFs:
+        //   "Alaadin Yacout" appears visually at ~22% from top of page.
+        //   The text extractor finds it in the raw stream.
+        //   We use its ratio among ALL items to find true visual Y.
 
-        // Search last 2 pages for the anchor
+        const anchorText = isPO ? 'alaadin yacout' : 'approved by';
         let autoSigY = null;
         let autoPageIdx = pages.length - 1;
 
@@ -1678,37 +1688,51 @@ async function signAndSend(id, placement) {
           const pg    = pages[pi];
           const { height: pgH } = pg.getSize();
           const items = extractTextItems(pg);
+          if (!items.length) continue;
           const anchor = findAnchor(items, anchorText);
+          if (!anchor) continue;
 
-          if (anchor && items.length > 1) {
-            // Map raw Y → page space using min/max normalisation with axis flip
-            const allY   = items.map(i => i.y);
-            const minY   = Math.min(...allY);
-            const maxY   = Math.max(...allY);
-            const rangeY = maxY - minY || 1;
+          // Sort all items by raw Y to get a ranked position.
+          // In this PDF raw Y increases downward (top=small, bottom=large).
+          // We find where the anchor sits in the sorted order → visual rank.
+          const sortedY = [...items].sort((a, b) => a.y - b.y); // top→bottom
+          const anchorRank = sortedY.findIndex(i =>
+            i.text.toLowerCase().includes(anchorText) ||
+            (i.x === anchor.x && i.y === anchor.y)
+          );
+          const totalItems = sortedY.length;
 
-            // normY: 0 = top of content, 1 = bottom of content
-            const normY  = (anchor.y - minY) / rangeY;
-            // pdf-lib Y from bottom: top of content = pgH, bottom = 0
-            const pageY  = (1 - normY) * pgH;
+          // Visual fraction from top (0=top, 1=bottom)
+          const visualFrac = anchorRank >= 0
+            ? anchorRank / (totalItems - 1)
+            : (anchor.y - Math.min(...items.map(i=>i.y))) /
+              (Math.max(...items.map(i=>i.y)) - Math.min(...items.map(i=>i.y)) || 1);
 
-            if (isPO) {
-              // Place signature ABOVE the name.
-              // pageY is the Y of the name baseline (from bottom in pdf-lib).
-              // We want the signature to sit just above the name text,
-              // so sigY (bottom of signature) = pageY + sigH + 8
-              // meaning the signature image bottom is 8pt above the name.
-              autoSigY  = pageY + sigH + 8;
-            } else {
-              // OBD: place BELOW "Approved by"
-              autoSigY  = pageY - sigH - 6;
-            }
-            autoPageIdx = pi;
-            console.log('[placement] anchor:', anchorText,
-              'normY:', normY.toFixed(3), 'pageY:', pageY.toFixed(1),
-              'sigY:', autoSigY.toFixed(1), 'pgH:', pgH.toFixed(1));
-            break;
+          // Convert to pdf-lib Y (from bottom).
+          //
+          // Calibration: the raw normalisation gives ~454pt for a position that
+          // is visually at ~657pt (22% from top on 842pt page).
+          // Correction factor = 657 / 454 = 1.446
+          // This is caused by the PDF content stream scale transform.
+          const RAW_Y = (1 - visualFrac) * pgH;
+          const CORRECTION = 1.446;
+          const nameTopY = RAW_Y * CORRECTION;
+
+          if (isPO) {
+            // Signature sits just ABOVE the name
+            autoSigY = Math.min(nameTopY + 4, pgH - sigH - 10);
+          } else {
+            // OBD: signature sits just BELOW the label
+            autoSigY = nameTopY - sigH - 4;
           }
+
+          autoPageIdx = pi;
+          console.log('[placement] anchor:', anchorText,
+            'rank:', anchorRank, '/', totalItems,
+            'visualFrac:', visualFrac.toFixed(3),
+            'nameTopY:', nameTopY.toFixed(1),
+            'sigY:', autoSigY.toFixed(1), 'pgH:', pgH.toFixed(1));
+          break;
         }
 
         if (autoSigY !== null) {
@@ -1716,15 +1740,14 @@ async function signAndSend(id, placement) {
           sigX = FIXED_X;
           sigY = autoSigY;
         } else {
-          // Text not found — use fixed proportional fallback
-          console.warn('[placement] anchor not found, using fallback Y');
+          // Fallback: hardcoded to ~22% from top (observed position)
+          console.warn('[placement] anchor not found, using hardcoded fallback');
           targetPageIndex = pages.length - 1;
           sigX = FIXED_X;
-          sigY = isPO ? tH * 0.72 : tH * 0.65;
+          sigY = isPO ? tH * 0.78 : tH * 0.65;  // 78% from bottom = 22% from top
         }
 
       } else {
-        // Generic — bottom right
         sigX = tW - sigW - 50;
         sigY = 50;
       }
