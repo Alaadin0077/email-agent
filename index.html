@@ -9,6 +9,8 @@
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,300&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet" />
 <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@3.10.0/lib/msal-browser.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>if(window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';</script>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -1057,7 +1059,7 @@ async function selectEmail(id) {
         </div>
         <div class="d-actions">
           <button class="dact" onclick="setNav(document.querySelectorAll('.nav-item')[10],'pdf')">📁 Upload signature</button>
-          <button class="dact sign-send" onclick="signAndSend()" ${ready?'':'disabled'}>✍️ Sign &amp; send</button>
+          <button class="dact sign-send" onclick="openPlacementModal()" ${ready?'':'disabled'}>✍️ Place &amp; send</button>
         </div>
       </div>`;
   } else {
@@ -1116,6 +1118,289 @@ function regenerateDraft(id) {
   if (el && e) el.innerText = buildDraft(e);
 }
 
+// ── CLAUDE VISION: FIND SIGNATURE LOCATION ───────────────────
+//
+// Renders each page of the PDF to a canvas (via PDF.js), sends the image
+// to Claude claude-sonnet-4-20250514 with a prompt asking where to place
+// the signature. Claude returns JSON: { pageIndex, xPct, yPct }
+// where xPct/yPct are 0-100 percentages from the top-left of the page.
+//
+async function findSignatureLocationWithClaude(pdfBase64, isPO, isOBD, pdfLibPages) {
+  // Determine what we're looking for
+  const target = isPO
+    ? 'above the text "Alaadin Yacout" or "Alaadin Yacout" signature block'
+    : isOBD
+      ? 'below the text "Approved by" or the approved-by section'
+      : 'at a standard signature position (bottom-right of last page)';
+
+  // Load PDF.js doc from the same bytes
+  const rawBytes = Uint8Array.from(atob(pdfBase64), ch => ch.charCodeAt(0));
+  const pdfjsDoc = await pdfjsLib.getDocument({ data: rawBytes }).promise;
+  const numPages = pdfjsDoc.numPages;
+
+  // Render only the last 2 pages — signature blocks are always near the end
+  const pageImages = [];
+  const offscreen = document.createElement('canvas');
+  const startPage = Math.max(1, numPages - 1); // last 2 pages (1-indexed)
+
+  for (let i = startPage; i <= numPages; i++) {
+    const pg = await pdfjsDoc.getPage(i);
+    const vp = pg.getViewport({ scale: 1.5 }); // higher scale = better OCR
+    offscreen.width  = vp.width;
+    offscreen.height = vp.height;
+    const ctx = offscreen.getContext('2d');
+    ctx.clearRect(0, 0, vp.width, vp.height);
+    await pg.render({ canvasContext: ctx, viewport: vp }).promise;
+    const dataUrl = offscreen.toDataURL('image/jpeg', 0.85);
+    pageImages.push({
+      pageIndex: i - 1,       // 0-indexed for pdf-lib
+      base64: dataUrl.split(',')[1],
+      width: vp.width,
+      height: vp.height
+    });
+  }
+
+  // Build message content — one image block per page
+  const content = [];
+
+  pageImages.forEach((pg, idx) => {
+    content.push({
+      type: 'text',
+      text: `Page ${idx + 1} of ${numPages}:`
+    });
+    content.push({
+      type: 'image',
+      source: { type: 'base64', media_type: 'image/jpeg', data: pg.base64 }
+    });
+  });
+
+  content.push({
+    type: 'text',
+    text: `This is a PDF document with ${numPages} page(s). I need to place a signature image ${target}.
+
+Please find the correct location and return ONLY a JSON object with no other text:
+{
+  "pageIndex": <0-based page number where the signature should go>,
+  "xPct": <X position as percentage 0-100 from left edge of that page>,
+  "yPct": <Y position as percentage 0-100 from TOP edge of that page>,
+  "reasoning": "<one sentence explaining what you found>"
+}
+
+Important notes:
+- xPct and yPct refer to where the BOTTOM-LEFT corner of the signature should be placed
+- For "above Alaadin Yacout": place the signature so it sits just above his name text
+- Return the page where the relevant text actually appears
+- If you cannot find the specific text, place at bottom-left of the last page (xPct:5, yPct:85)`
+  });
+
+  // Call Claude API
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 256,
+      messages: [{ role: 'user', content }]
+    })
+  });
+
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error('Claude API error: ' + err);
+  }
+
+  const data = await response.json();
+  const text = (data.content || []).find(b => b.type === 'text')?.text || '';
+  console.log('[vision] Claude response:', text);
+
+  // Parse JSON from response
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) throw new Error('Claude returned no JSON: ' + text);
+  const result = JSON.parse(jsonMatch[0]);
+
+  // Validate
+  if (typeof result.pageIndex !== 'number' ||
+      typeof result.xPct     !== 'number' ||
+      typeof result.yPct     !== 'number') {
+    throw new Error('Claude returned invalid JSON: ' + text);
+  }
+
+  // Clamp page index to valid range
+  result.pageIndex = Math.max(0, Math.min(result.pageIndex, pdfLibPages.length - 1));
+  console.log('[vision] result:', result);
+  return result;
+}
+
+// ── PLACEMENT MODAL ──────────────────────────────────────────
+//
+// Opens a full-screen PDF preview. User clicks the exact spot for
+// the signature. Coordinates are stored in page-space (pdf-lib units)
+// then used when signAndSend() is called.
+//
+
+let modalPdfDoc    = null;  // pdf-lib PDFDocument (for signing)
+let modalPdfjsDoc  = null;  // PDF.js document (for rendering)
+let modalPageNum   = 1;
+let modalTotalPages = 1;
+let modalClickX    = null;  // pdf-lib page-space X
+let modalClickY    = null;  // pdf-lib page-space Y
+let modalClickPage = null;  // 0-indexed page
+let modalPdfBase64 = null;  // raw base64 of the PDF
+let modalAttachName = '';
+let modalEmailId   = null;
+
+// Open the modal: download the PDF, render page 1, wait for click
+async function openPlacementModal() {
+  const targetId = selId;
+  if (!sigData) { toast('Upload your signature first.'); return; }
+  const e = allEmails.find(x => x.id === targetId);
+  if (!e) { toast('No email selected.'); return; }
+
+  toast('📎 Loading PDF preview…');
+  try {
+    const enc = encodeURIComponent(targetId);
+    const attachList = await graphGet(`/me/messages/${enc}/attachments`);
+    const pdfMeta = attachList.value?.find(a => a.name?.toLowerCase().endsWith('.pdf'));
+    if (!pdfMeta) { toast('❌ No PDF attachment found.'); return; }
+    const fullAttach = await graphGet(`/me/messages/${enc}/attachments/${encodeURIComponent(pdfMeta.id)}`);
+    if (!fullAttach.contentBytes) { toast('❌ Could not download PDF.'); return; }
+
+    modalPdfBase64  = fullAttach.contentBytes;
+    modalAttachName = fullAttach.name;
+    modalEmailId    = targetId;
+
+    // Load with PDF.js for rendering
+    const rawBytes = Uint8Array.from(atob(modalPdfBase64), ch => ch.charCodeAt(0));
+    modalPdfjsDoc  = await pdfjsLib.getDocument({ data: rawBytes }).promise;
+    modalTotalPages = modalPdfjsDoc.numPages;
+    modalPageNum    = modalTotalPages; // default: last page (where signatures usually are)
+    modalClickX = null; modalClickY = null; modalClickPage = null;
+
+    // Also load with pdf-lib so we have it ready for signing
+    modalPdfDoc = await PDFLib.PDFDocument.load(rawBytes);
+
+    document.getElementById('modal-confirm-btn').disabled = true;
+    document.getElementById('placement-modal').classList.add('open');
+    await renderModalPage(modalPageNum);
+
+  } catch(err) {
+    toast('❌ ' + err.message);
+    console.error(err);
+  }
+}
+
+async function renderModalPage(pageNum) {
+  const page    = await modalPdfjsDoc.getPage(pageNum);
+  const canvas  = document.getElementById('modal-canvas');
+  const ctx     = canvas.getContext('2d');
+  const wrap    = document.getElementById('modal-canvas-wrap');
+
+  // Scale to fit the available width (leaving 40px padding each side)
+  const availW  = Math.min(wrap.clientWidth - 80, 900);
+  const viewport = page.getViewport({ scale: 1 });
+  const scale   = availW / viewport.width;
+  const vp      = page.getViewport({ scale });
+
+  canvas.width  = vp.width;
+  canvas.height = vp.height;
+
+  await page.render({ canvasContext: ctx, viewport: vp }).promise;
+
+  // Draw ghost if already clicked on this page
+  updateGhost();
+
+  // Update nav
+  document.getElementById('modal-page-label').textContent = `Page ${pageNum} / ${modalTotalPages}`;
+  document.getElementById('modal-prev').disabled = pageNum <= 1;
+  document.getElementById('modal-next').disabled = pageNum >= modalTotalPages;
+
+  // Attach click handler
+  canvas.onclick = (ev) => onCanvasClick(ev, page, vp, pageNum - 1);
+}
+
+function onCanvasClick(ev, pdfjsPage, viewport, pageIndex) {
+  const canvas  = document.getElementById('modal-canvas');
+  const rect    = canvas.getBoundingClientRect();
+  const canvasX = ev.clientX - rect.left;
+  const canvasY = ev.clientY - rect.top;
+
+  // Convert canvas px → PDF.js user space → pdf-lib page space
+  // PDF.js viewport maps: pdfX = canvasX / scale, pdfY_fromTop = canvasY / scale
+  // pdf-lib uses Y from bottom: pdfLibY = pageHeight - pdfY_fromTop
+  const pdfJsPoint = viewport.convertToDivXY(canvasX, canvasY);
+  // Actually use inverse transform:
+  const scale = viewport.scale;
+  const pdfX  = canvasX / scale;
+  const pdfYFromTop = canvasY / scale;
+
+  // pdf-lib page height (in pt)
+  const pdfLibPage = modalPdfDoc.getPages()[pageIndex];
+  const { height: pageH } = pdfLibPage.getSize();
+  const pdfLibY = pageH - pdfYFromTop;
+
+  modalClickX    = pdfX;
+  modalClickY    = pdfLibY;
+  modalClickPage = pageIndex;
+
+  updateGhost(canvasX, canvasY);
+  document.getElementById('modal-confirm-btn').disabled = false;
+}
+
+function updateGhost(cx, cy) {
+  const ghost  = document.getElementById('sig-ghost');
+  const canvas = document.getElementById('modal-canvas');
+  if (cx === undefined || modalClickPage !== (modalPageNum - 1)) {
+    ghost.style.display = 'none';
+    return;
+  }
+  // Estimate signature display size based on scale
+  const pdfLibPages = modalPdfDoc.getPages();
+  const pageIdx = modalClickPage;
+  const { width: pageW } = pdfLibPages[pageIdx].getSize();
+  const scale = canvas.width / pageW;
+  // sig is scaled 0.35 of original — approximate display width ~120px at scale=1
+  const dispW = 150 * scale;
+  const dispH = 60  * scale;
+  ghost.style.display  = 'block';
+  ghost.style.left     = (cx - dispW / 2) + 'px';
+  ghost.style.top      = (cy - dispH)     + 'px';   // place above click point
+  ghost.style.width    = dispW + 'px';
+  ghost.style.height   = dispH + 'px';
+}
+
+async function modalPrevPage() {
+  if (modalPageNum > 1) { modalPageNum--; await renderModalPage(modalPageNum); }
+}
+async function modalNextPage() {
+  if (modalPageNum < modalTotalPages) { modalPageNum++; await renderModalPage(modalPageNum); }
+}
+
+function closeModal() {
+  document.getElementById('placement-modal').classList.remove('open');
+  modalPdfDoc = null; modalPdfjsDoc = null;
+  modalClickX = null; modalClickY = null;
+}
+
+// Called when user confirms placement — signs and sends
+async function confirmPlacement() {
+  if (modalClickX === null) { toast('Click on the PDF first to place the signature.'); return; }
+  document.getElementById('modal-confirm-btn').disabled = true;
+  document.getElementById('modal-confirm-btn').textContent = '⏳ Signing…';
+
+  try {
+    await signAndSend(modalEmailId, {
+      x: modalClickX,
+      y: modalClickY,
+      pageIndex: modalClickPage
+    });
+    closeModal();
+  } catch(err) {
+    toast('❌ ' + err.message);
+    document.getElementById('modal-confirm-btn').disabled = false;
+    document.getElementById('modal-confirm-btn').textContent = '✍️ Sign & Send';
+  }
+}
+
 // ── SIGN & SEND ───────────────────────────────────────────
 //
 // Signature placement rules:
@@ -1126,34 +1411,44 @@ function regenerateDraft(id) {
 // Reply is a clean new message with ONLY the signed PDF attached
 // (no inherited attachments from the original email thread).
 //
-async function signAndSend(id) {
+async function signAndSend(id, placement) {
+  // placement = { x, y, pageIndex } in pdf-lib page space — provided by the modal.
+  // If not provided (e.g. called from runAgent), falls back to auto-detect.
   const targetId = id || selId;
   if (!sigData) { toast('Upload your signature first.'); return; }
   const e = allEmails.find(x => x.id === targetId);
   if (!e) { toast('No email selected.'); return; }
 
-  toast('📎 Fetching PDF attachment…');
+  toast('✍️ Signing PDF…');
   try {
     const token = await getToken();
     const enc = encodeURIComponent(targetId);
 
     // ── 1. Find the PDF attachment ────────────────────────────
-    const attachList = await graphGet(`/me/messages/${enc}/attachments`);
-    const pdfMeta = attachList.value?.find(a => a.name?.toLowerCase().endsWith('.pdf'));
-    if (!pdfMeta) { toast('❌ No PDF attachment found.'); return; }
-    const fullAttach = await graphGet(`/me/messages/${enc}/attachments/${encodeURIComponent(pdfMeta.id)}`);
-    if (!fullAttach.contentBytes) { toast('❌ Could not download PDF content.'); return; }
-
-    toast('✍️ Signing PDF…');
+    // If called from modal, we already have the pdf-lib doc — reuse it.
+    let pdfDoc, fullAttach;
+    if (placement && modalPdfDoc && modalEmailId === targetId) {
+      pdfDoc = modalPdfDoc;
+      // We still need fullAttach for the name — fetch meta only (no contentBytes needed)
+      const attachList = await graphGet(`/me/messages/${enc}/attachments`);
+      const pdfMeta = attachList.value?.find(a => a.name?.toLowerCase().endsWith('.pdf'));
+      fullAttach = { name: pdfMeta?.name || 'document.pdf', contentBytes: modalPdfBase64 };
+    } else {
+      const attachList = await graphGet(`/me/messages/${enc}/attachments`);
+      const pdfMeta = attachList.value?.find(a => a.name?.toLowerCase().endsWith('.pdf'));
+      if (!pdfMeta) { toast('❌ No PDF attachment found.'); return; }
+      fullAttach = await graphGet(`/me/messages/${enc}/attachments/${encodeURIComponent(pdfMeta.id)}`);
+      if (!fullAttach.contentBytes) { toast('❌ Could not download PDF content.'); return; }
+      const pdfBytes = Uint8Array.from(atob(fullAttach.contentBytes), c => c.charCodeAt(0));
+      pdfDoc = await PDFLib.PDFDocument.load(pdfBytes);
+    }
 
     // ── 2. Detect document type from subject + body ───────────
     const context = (e.subject + ' ' + e.body).toUpperCase();
-    const isPO  = context.includes('PO ') || context.includes(' PO') || /\bPO\b/.test(context);
+    const isPO  = /\bPO\b/.test(context);
     const isOBD = context.includes('OBD');
 
-    // ── 3. Load PDF and embed signature image ─────────────────
-    const pdfBytes = Uint8Array.from(atob(fullAttach.contentBytes), c => c.charCodeAt(0));
-    const pdfDoc   = await PDFLib.PDFDocument.load(pdfBytes);
+    // ── 3. Embed signature image ──────────────────────────────
     const pages    = pdfDoc.getPages();
     const lastPage = pages[pages.length - 1];
     const { width, height } = lastPage.getSize();
@@ -1168,89 +1463,52 @@ async function signAndSend(id) {
     const sigW = sigDims.width;
     const sigH = sigDims.height;
 
-    // ── 4. Determine which page + X/Y placement ─────────────────
+    // ── 4. Place signature using Claude Vision ───────────────
     //
-    // IMPORTANT: Many PDFs apply a content-stream transform (cm operator)
-    // that scales all coordinates. For example, a page that is 595×842 pt
-    // may have text at y=5603 because the stream uses a 0.07× scale.
-    // We must detect the CTM (current transformation matrix) from the cm
-    // operators in the raw stream and use it to map raw text coordinates
-    // into actual page-space coordinates before placing the signature.
+    // Strategy: render each PDF page to a canvas image using PDF.js,
+    // send it to Claude with a prompt asking for the signature location
+    // as a percentage (x%, y% from top-left). Convert those percentages
+    // to pdf-lib page-space coordinates (origin at bottom-left).
     //
-    // Strategy:
-    //   PO  → search ALL pages for "Alaadin Yacout"; place sig ABOVE that text.
-    //   OBD → search ALL pages for "Approved by";    place sig BELOW that text.
-    //   Default → bottom-right of last page.
+    // If called from the placement modal (placement arg provided), skip
+    // vision and use the user's clicked coordinates directly.
 
-    let targetPageIndex = pages.length - 1; // default: last page
-    let sigX = width - sigW - 50;
-    let sigY = 50;
+    let targetPageIndex, sigX, sigY;
 
-    if (isPO || isOBD) {
-      const anchorText = isPO ? 'alaadin yacout' : 'approved by';
-      let found = false;
-
-      for (let pi = 0; pi < pages.length; pi++) {
-        const pg   = pages[pi];
-        const pgSz = pg.getSize();
-        const items = extractTextItems(pg);
-        const anchor = findAnchor(items, anchorText);
-
-        if (anchor) {
-          found = true;
-          targetPageIndex = pi;
-
-          // Detect the CTM scale/translate from cm operators in this page's stream
-          // so we can convert raw content-stream coordinates → page-space coordinates.
-          const ctm = detectPageCTM(pg);
-
-          // Map raw anchor coordinates through CTM → page space
-          // CTM is [a, b, c, d, e, f] where:
-          //   page_x = a*raw_x + c*raw_y + e
-          //   page_y = b*raw_x + d*raw_y + f
-          const pageAnchorX = ctm.a * anchor.x + ctm.c * anchor.y + ctm.e;
-          const pageAnchorY = ctm.b * anchor.x + ctm.d * anchor.y + ctm.f;
-          // Font size is also scaled
-          const pageAnchorH = anchor.h * Math.sqrt(ctm.a * ctm.a + ctm.b * ctm.b);
-
-          if (isPO) {
-            // Place sig so its bottom sits just above "Alaadin Yacout"
-            sigX = pageAnchorX;
-            sigY = pageAnchorY + pageAnchorH + 4;
-          } else {
-            // OBD: place sig just below "Approved by"
-            sigX = pageAnchorX;
-            sigY = pageAnchorY - sigH - 4;
-          }
-
-          // If CTM mapping produced coordinates outside the page,
-          // the transform math didn't work — use a safe proportional fallback.
-          const inBoundsX = sigX >= 0 && sigX <= pgSz.width;
-          const inBoundsY = sigY >= 0 && sigY <= pgSz.height;
-          if (!inBoundsX || !inBoundsY) {
-            console.warn('[placement] CTM coords out of bounds', {sigX, sigY, pgSz});
-            // Fallback: use proportional position based on raw coords ratio
-            const rawMaxY = Math.max(...items.map(i => i.y), 1);
-            const rawMaxX = Math.max(...items.map(i => i.x), 1);
-            sigX = (anchor.x / rawMaxX) * pgSz.width;
-            sigY = isPO
-              ? (anchor.y / rawMaxY) * pgSz.height + pageAnchorH + 4
-              : (anchor.y / rawMaxY) * pgSz.height - sigH - 4;
-          }
-
-          // Final clamp within page bounds
-          sigX = Math.max(10, Math.min(sigX, pgSz.width  - sigW - 10));
-          sigY = Math.max(10, Math.min(sigY, pgSz.height - sigH - 10));
-          break;
-        }
-      }
-
-      if (!found) {
-        // Fallback positions on last page
-        sigY = isPO ? height * 0.30 : height * 0.20;
+    if (placement) {
+      // User manually clicked in the modal — use exact coords
+      targetPageIndex = placement.pageIndex;
+      sigX = placement.x - sigW / 2;
+      sigY = placement.y;
+    } else {
+      // Auto-detect with Claude Vision
+      toast('🤖 Claude is locating the signature spot…');
+      try {
+        const visionResult = await findSignatureLocationWithClaude(
+          fullAttach.contentBytes, isPO, isOBD, pages
+        );
+        targetPageIndex = visionResult.pageIndex;
+        const pg = pages[targetPageIndex];
+        const { width: pgW, height: pgH } = pg.getSize();
+        // visionResult.xPct and yPct are 0-100 from top-left of the page image
+        // pdf-lib origin is bottom-left, so flip Y
+        sigX = (visionResult.xPct / 100) * pgW - sigW / 2;
+        sigY = pgH - (visionResult.yPct / 100) * pgH - sigH;
+        console.log('[vision] pageIndex:', targetPageIndex,
+          'xPct:', visionResult.xPct, 'yPct:', visionResult.yPct,
+          '→ sigX:', sigX.toFixed(1), 'sigY:', sigY.toFixed(1));
+      } catch (visionErr) {
+        console.warn('[vision] failed:', visionErr.message, '— using fallback');
+        targetPageIndex = pages.length - 1;
         sigX = width - sigW - 50;
+        sigY = 50;
       }
     }
+
+    // Clamp within page bounds
+    const tpSz = pages[targetPageIndex].getSize();
+    sigX = Math.max(10, Math.min(sigX, tpSz.width  - sigW - 10));
+    sigY = Math.max(10, Math.min(sigY, tpSz.height - sigH - 10));
 
     // Draw on the correct page
     pages[targetPageIndex].drawImage(sigImage, { x: sigX, y: sigY, width: sigW, height: sigH });
@@ -1905,16 +2163,24 @@ async function debugPdf(input) {
       </div>`;
 
       if (Object.keys(found).length) {
+        const allY2  = items.map(i => i.y);
+        const allX2  = items.map(i => i.x);
+        const minY2  = Math.min(...allY2);
+        const maxY2  = Math.max(...allY2);
+        const maxX2  = Math.max(...allX2);
+        const rangeY2 = maxY2 - minY2 || 1;
+
         for (const [anchor, a] of Object.entries(found)) {
-          // Map through CTM
-          const px = ctm.a * a.x + ctm.c * a.y + ctm.e;
-          const py = ctm.b * a.x + ctm.d * a.y + ctm.f;
-          const ph = a.h * Math.sqrt(ctm.a * ctm.a + ctm.b * ctm.b);
+          const normY2 = (a.y - minY2) / rangeY2;
+          const normX2 = maxX2 > 0 ? a.x / maxX2 : 0.1;
+          const pageY2 = (1 - normY2) * height;
+          const pageX2 = normX2 * width;
           html += `<div class="dbg-status ok">
             🎯 Found anchor "<strong>${anchor}</strong>"<br>
             Raw coords: x=${a.x.toFixed(1)}, y=${a.y.toFixed(1)}, fontSize=${a.h.toFixed(1)}<br>
-            Page-space: x=${px.toFixed(1)}, y=${py.toFixed(1)}, fontSize≈${ph.toFixed(1)}<br>
-            <span style="font-size:11px">Signature will be placed at page y = ${(py + ph + 4).toFixed(1)} (above name)</span>
+            Raw Y range: min=${minY2.toFixed(0)} → max=${maxY2.toFixed(0)} (normY=${normY2.toFixed(3)})<br>
+            <strong>Page-space: x=${pageX2.toFixed(1)}, y=${pageY2.toFixed(1)} (page is ${width.toFixed(0)}×${height.toFixed(0)}pt)</strong><br>
+            <span style="font-size:11px">Signature bottom will be at page y ≈ ${(pageY2 + 2).toFixed(1)} (just above name)</span>
           </div>`;
         }
       } else {
