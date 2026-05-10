@@ -717,8 +717,12 @@ body {
           <input type="file" id="sig-input" accept="image/*" style="display:none" onchange="loadSignature(this)" />
         </div>
         <div id="sig-preview-box" style="display:none" class="sig-box">
-          <div class="sig-box-lbl">Your signature — ready to use</div>
+          <div class="sig-box-lbl">Your signature — saved &amp; ready to use</div>
           <img id="sig-img" alt="Signature preview" />
+          <div style="display:flex;gap:7px;justify-content:center;margin-top:10px">
+            <button class="pdf-sign-btn" onclick="document.getElementById('sig-input').click()">🔄 Change signature</button>
+            <button class="pdf-sign-btn" style="border-color:var(--red);color:var(--red)" onclick="clearSignature()">🗑 Remove</button>
+          </div>
         </div>
         <div style="font-size:12px;font-weight:600;color:var(--ink-3)">Documents queue</div>
         <div id="pdf-list"></div>
@@ -795,7 +799,9 @@ const msalConfig = {
   system: { allowNativeBroker: false }
 };
 const scopes = ['openid','profile','User.Read','Mail.Read','Mail.Send','Mail.ReadWrite'];
-let msalInstance, accessToken, allEmails = [], sigData = null, pdfs = [], curNav = 'all', selId = null;
+let msalInstance, accessToken, allEmails = [], pdfs = [], curNav = 'all', selId = null;
+// Signature persisted in localStorage so it survives page reloads / sign-out
+let sigData = localStorage.getItem('sigData') || null;
 
 let guidelines = [
   { id:1, trigger:'please reply / reply', title:'Draft & send reply', desc:"Draft a professional reply, acknowledge the sender's point, offer next steps, and send.", icon:'↩️' },
@@ -819,7 +825,7 @@ async function signIn() {
     document.getElementById('user-email-display').textContent = result.account.username;
     document.getElementById('login-screen').style.display = 'none';
     document.getElementById('app').style.display = 'flex';
-    renderGuidelines(); renderPdfs(); loadEmails();
+    renderGuidelines(); renderPdfs(); restoreSignature(); loadEmails();
   } catch(e) {
     const el = document.getElementById('login-error');
     el.style.display = 'block';
@@ -901,7 +907,12 @@ async function loadEmails() {
 }
 
 function detectAction(subject, body) {
-  const t = (subject + ' ' + body).toLowerCase();
+  const t   = (subject + ' ' + body).toLowerCase();
+  const raw = subject + ' ' + body; // preserve case for PO/OBD check
+  // PO emails — treat as sign action (signature required above Alaadin Yacout)
+  if (/\bPO\b/.test(raw)) return 'sign';
+  // OBD emails — also require signature
+  if (/\bOBD\b/.test(raw)) return 'sign';
   if (t.includes('add signature')||t.includes('sign and return')||t.includes('please sign')||t.includes('add your signature')) return 'sign';
   if (t.includes('please reply')||t.includes('reply with')||t.includes('kindly reply')||t.includes('respond to')||t.includes('let us know')||t.includes('your availability')) return 'reply';
   return 'none';
@@ -1124,49 +1135,64 @@ async function signAndSend(id) {
     const sigW = sigDims.width;
     const sigH = sigDims.height;
 
-    // ── 4. Determine X / Y placement ─────────────────────────
+    // ── 4. Determine which page + X/Y placement ─────────────────
     //
     // pdf-lib uses bottom-left origin (y=0 is bottom of page).
-    // We scan the page's text content to locate anchor strings.
-    // If we can't find the anchor we fall back to the default position.
     //
-    let sigX = width - sigW - 50;   // default: right-aligned
-    let sigY = 50;                   // default: near bottom
+    // Strategy:
+    //   PO  → search ALL pages for "Alaadin Yacout"; place sig ABOVE that text.
+    //   OBD → search ALL pages for "Approved by";    place sig BELOW that text.
+    //   Default → bottom-right of last page.
+    //
+    // Text extraction: we decode each page's raw content stream bytes as
+    // latin-1 and parse PDF text operators (BT/ET, Tf, Td/TD/Tm, Tj/TJ).
+    // This works for standard digitally-created PDFs. For scanned/image PDFs
+    // the anchor won't be found and we fall back gracefully.
+
+    let targetPageIndex = pages.length - 1; // default: last page
+    let sigX = width - sigW - 50;
+    let sigY = 50;
 
     if (isPO || isOBD) {
-      // Extract all text items from the page with their positions
-      const items = getPageTextItems(lastPage);
+      const anchorText = isPO ? 'alaadin yacout' : 'approved by';
+      let found = false;
 
-      if (isPO) {
-        // Anchor: "Alaadin Yacout" — place signature ABOVE the name
-        const anchor = findAnchor(items, 'alaadin yacout');
+      for (let pi = 0; pi < pages.length; pi++) {
+        const pg   = pages[pi];
+        const pgSz = pg.getSize();
+        const items = extractTextItems(pg);
+        const anchor = findAnchor(items, anchorText);
+
         if (anchor) {
-          // Place sig so its bottom sits ~6pt above the anchor text top
-          sigX = anchor.x;
-          sigY = anchor.y + anchor.h + 6;
-        } else {
-          // Fallback: right side, 30% up from bottom
-          sigY = height * 0.30;
-        }
-      } else if (isOBD) {
-        // Anchor: "Approved by" — place signature BELOW the text
-        const anchor = findAnchor(items, 'approved by');
-        if (anchor) {
-          // Place sig so its top sits ~6pt below the anchor text bottom
-          sigY = anchor.y - sigH - 6;
-          sigX = anchor.x;
-        } else {
-          // Fallback: right side, 20% up from bottom
-          sigY = height * 0.20;
+          found = true;
+          targetPageIndex = pi;
+
+          if (isPO) {
+            // Place sig so its BOTTOM is ~8pt above the anchor's baseline
+            sigX = anchor.x;
+            sigY = anchor.y + anchor.h + 8;   // anchor.y is baseline; add fontSize height
+          } else {
+            // OBD: place sig so its TOP is ~8pt below the anchor's bottom
+            sigX = anchor.x;
+            sigY = anchor.y - sigH - 8;
+          }
+
+          // Clamp within page bounds
+          sigX = Math.max(10, Math.min(sigX, pgSz.width  - sigW - 10));
+          sigY = Math.max(10, Math.min(sigY, pgSz.height - sigH - 10));
+          break;
         }
       }
 
-      // Keep signature within page bounds
-      sigX = Math.max(10, Math.min(sigX, width  - sigW - 10));
-      sigY = Math.max(10, Math.min(sigY, height - sigH - 10));
+      if (!found) {
+        // Fallback positions on last page
+        sigY = isPO ? height * 0.30 : height * 0.20;
+        sigX = width - sigW - 50;
+      }
     }
 
-    lastPage.drawImage(sigImage, { x: sigX, y: sigY, width: sigW, height: sigH });
+    // Draw on the correct page
+    pages[targetPageIndex].drawImage(sigImage, { x: sigX, y: sigY, width: sigW, height: sigH });
 
     const signedBytes  = await pdfDoc.save();
     const signedBase64 = btoa(Array.from(signedBytes).map(b => String.fromCharCode(b)).join(''));
@@ -1175,35 +1201,33 @@ async function signAndSend(id) {
 
     // ── 5. Build recipient list & email body ──────────────────
     //
-    // TO:  the original sender of the email (whoever sent to alaadinyacout@gulfmedical.com)
-    // CC:  alaadinyacout@gulfmedical.com always included
+    // Routing logic:
+    //   TO:  e.email  = the person who sent the email TO alaadinyacout@gulfmedical.com
+    //                   (i.e. the original sender — we are replying to them)
+    //   CC:  alaadinyacout@gulfmedical.com — always copied, never in To:
     //
-    // For PO emails, the greeting uses the name extracted from the To: field
-    // (the person the original email was addressed to, i.e. Alaadin's name or
-    // a colleague's — whichever was in the To header). We look through
-    // toRecipients for the gulfmedical address and use that display name;
-    // otherwise fall back to the sender's first name.
+    // Greeting name = the sender's display name (first word), taken directly
+    // from e.from (the From: field of the incoming email). This is the person
+    // we are writing back to, so "Dear [their name]" is correct.
     //
     const ALAADIN_EMAIL = 'alaadinyacout@gulfmedical.com';
 
-    // Resolve the greeting name for PO emails from the To: field
-    let greetingName = e.from.split(' ')[0]; // default: sender's first name
-    if (isPO && e.toRecipients && e.toRecipients.length) {
-      // Prefer the gulfmedical recipient's display name; fall back to first To recipient
-      const gulfRec = e.toRecipients.find(r => r.address.toLowerCase() === ALAADIN_EMAIL);
-      const nameSource = gulfRec || e.toRecipients[0];
-      if (nameSource && nameSource.name) greetingName = nameSource.name.split(' ')[0];
-    }
+    // Use the sender's first name for the greeting
+    const greetingName = e.from.split(' ')[0] || 'Sir/Madam';
 
     // Build the email body depending on document type
     let emailBody;
     if (isPO) {
       emailBody = `Dear ${greetingName},\n\nPlease find attached approved order, please make sure to send to supplier ASAP and copy all concerned persons.\n\nBest regards,`;
     } else {
-      emailBody = `Dear ${e.from.split(' ')[0]},\n\nPlease find the signed document attached as requested.\n\nBest regards,`;
+      emailBody = `Dear ${greetingName},\n\nPlease find the signed document attached as requested.\n\nBest regards,`;
     }
 
     // ── 6. Send a CLEAN new message — ONLY the signed PDF attached ─
+    //
+    // TO:  the original sender (person who emailed alaadin)
+    // CC:  alaadinyacout@gulfmedical.com  ← copied, NOT in To:
+    //
     const sendRes = await fetch('https://graph.microsoft.com/v1.0/me/sendMail', {
       method: 'POST',
       headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
@@ -1211,9 +1235,7 @@ async function signAndSend(id) {
         message: {
           subject: 'Re: ' + e.subject,
           body: { contentType: 'Text', content: emailBody },
-          // Reply TO the original sender (the person who emailed alaadin)
           toRecipients: [{ emailAddress: { address: e.email, name: e.from } }],
-          // Always CC alaadinyacout@gulfmedical.com
           ccRecipients: [{ emailAddress: { address: ALAADIN_EMAIL, name: 'Alaadin Yacout' } }],
           attachments: [{
             '@odata.type': '#microsoft.graph.fileAttachment',
@@ -1243,50 +1265,143 @@ async function signAndSend(id) {
 
 // ── PDF TEXT HELPERS ──────────────────────────────────────
 //
-// pdf-lib doesn't expose a built-in text-extraction API, so we walk
-// the page's content stream operators to collect text items + positions.
-// This is a best-effort extraction sufficient for locating anchor strings.
+// extractTextItems: decode a page's raw content stream and parse PDF text
+// operators to collect { text, x, y, h } items.
 //
-function getPageTextItems(page) {
+// We try two approaches:
+//   1. pdf-lib's high-level node access (.encodeDict / context lookup)
+//   2. Walking page.node raw dict for a Contents stream
+//
+// The output is good enough to locate anchor strings by position.
+// For scanned / image-only PDFs the result will be empty and callers
+// fall back to default coordinates.
+//
+function extractTextItems(page) {
   const items = [];
   try {
-    const contentStream = page.node.get(page.node.context.obj('Contents'));
-    if (!contentStream) return items;
-    // Access raw content bytes via pdf-lib internals
-    const rawBytes = contentStream.contents || contentStream.getContents?.() || null;
+    // Grab raw bytes from the page's content stream via pdf-lib internals
+    let rawBytes = null;
+
+    // Attempt 1: page.contentStream (pdf-lib ≥1.11)
+    try {
+      const cs = page.node.get(page.doc.context.obj('Contents'));
+      if (cs && cs.contents) rawBytes = cs.contents;
+    } catch(_) {}
+
+    // Attempt 2: walk the PDFDict for /Contents
+    if (!rawBytes) {
+      try {
+        const contentsRef = page.node.get(
+          page.node.context.obj('Contents')
+        );
+        if (contentsRef) {
+          const stream = page.node.context.lookup(contentsRef);
+          if (stream && stream.contents) rawBytes = stream.contents;
+        }
+      } catch(_) {}
+    }
+
+    // Attempt 3: use the undocumented .node.Contents path used by pdf-lib 1.x
+    if (!rawBytes) {
+      try {
+        const n = page.node;
+        // n.Contents may be a PDFRef → resolve it
+        const contentsObj = n.Contents;
+        if (contentsObj) {
+          const resolved = n.context.lookup(contentsObj);
+          if (resolved && resolved.contents) rawBytes = resolved.contents;
+          else if (resolved && resolved.getContents) rawBytes = resolved.getContents();
+        }
+      } catch(_) {}
+    }
+
     if (!rawBytes) return items;
-    const content = typeof rawBytes === 'string' ? rawBytes : new TextDecoder('latin1').decode(rawBytes);
-    // Parse basic text-positioning operators: Td, TD, Tm, Tj, TJ, BT/ET
-    const lines = content.split('\n');
-    let curX = 0, curY = 0, inText = false, fontSize = 12;
-    for (const line of lines) {
-      const t = line.trim();
-      if (t === 'BT') { inText = true; continue; }
-      if (t === 'ET') { inText = false; continue; }
-      if (!inText) continue;
-      // Tf — font size: /F1 12 Tf
-      const tfM = t.match(/\/\S+\s+([\d.]+)\s+Tf$/);
+
+    const content = typeof rawBytes === 'string'
+      ? rawBytes
+      : new TextDecoder('latin1').decode(rawBytes);
+
+    // Tokenise the content stream line by line
+    // (PDF streams often have operators on individual lines, but not always —
+    //  we do a best-effort single-pass parse which is sufficient for anchors)
+    const lines = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+    let curX = 0, curY = 0, lineLeading = 0, inBT = false, fontSize = 12;
+
+    for (const raw of lines) {
+      const line = raw.trim();
+      if (!line) continue;
+
+      if (line === 'BT') { inBT = true; curX = 0; curY = 0; continue; }
+      if (line === 'ET') { inBT = false; continue; }
+      if (!inBT) continue;
+
+      // Tf  — /FontName Size Tf
+      const tfM = line.match(/\/\S+\s+([\d.]+)\s+Tf$/);
       if (tfM) { fontSize = parseFloat(tfM[1]); continue; }
-      // Td / TD — relative move: tx ty Td
-      const tdM = t.match(/^(-?[\d.]+)\s+(-?[\d.]+)\s+TD?$/);
-      if (tdM) { curX += parseFloat(tdM[1]); curY += parseFloat(tdM[2]); continue; }
-      // Tm — absolute matrix: a b c d e f Tm
-      const tmM = t.match(/^(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+Tm$/);
-      if (tmM) { curX = parseFloat(tmM[5]); curY = parseFloat(tmM[6]); continue; }
-      // Tj — literal string: (text) Tj
-      const tjM = t.match(/^\((.+)\)\s+Tj$/);
-      if (tjM) { items.push({ text: tjM[1], x: curX, y: curY, h: fontSize }); continue; }
-      // TJ — array: [(text) kerning ...] TJ
-      const tjArrM = t.match(/^\[(.+)\]\s+TJ$/);
-      if (tjArrM) {
-        const extracted = [];
-        const pieces = tjArrM[1].matchAll(/\(([^)]*)\)/g);
-        for (const p of pieces) extracted.push(p[1]);
-        if (extracted.length) items.push({ text: extracted.join(''), x: curX, y: curY, h: fontSize });
+
+      // TL  — leading
+      const tlM = line.match(/^([\d.]+)\s+TL$/);
+      if (tlM) { lineLeading = parseFloat(tlM[1]); continue; }
+
+      // Td / TD  — relative displacement
+      const tdM = line.match(/^(-?[\d.]+(?:\.[\d]+)?)\s+(-?[\d.]+(?:\.[\d]+)?)\s+TD?$/);
+      if (tdM) {
+        curX += parseFloat(tdM[1]);
+        curY += parseFloat(tdM[2]);
+        if (line.endsWith('TD')) lineLeading = -parseFloat(tdM[2]);
+        continue;
+      }
+
+      // T*  — move to start of next line
+      if (line === 'T*') { curY -= lineLeading; continue; }
+
+      // Tm  — set text matrix: a b c d e f Tm  (e=x, f=y)
+      const tmM = line.match(/^(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+Tm$/);
+      if (tmM) {
+        curX = parseFloat(tmM[5]);
+        curY = parseFloat(tmM[6]);
+        continue;
+      }
+
+      // Tj  — show string: (text) Tj
+      const tjM = line.match(/^\((.*)\)\s+Tj$/);
+      if (tjM) {
+        items.push({ text: decodePdfString(tjM[1]), x: curX, y: curY, h: fontSize });
+        continue;
+      }
+
+      // TJ  — show array: [(str1) kern (str2) ...] TJ
+      const tjAM = line.match(/^\[(.*)\]\s+TJ$/);
+      if (tjAM) {
+        const parts = [];
+        const re = /\(([^)]*)\)/g;
+        let m;
+        while ((m = re.exec(tjAM[1])) !== null) parts.push(m[1]);
+        if (parts.length) items.push({ text: decodePdfString(parts.join('')), x: curX, y: curY, h: fontSize });
+        continue;
+      }
+
+      // ' and " operators (move to next line then show)
+      const quoteM = line.match(/^\((.*)\)\s+'$/);
+      if (quoteM) {
+        curY -= lineLeading;
+        items.push({ text: decodePdfString(quoteM[1]), x: curX, y: curY, h: fontSize });
       }
     }
-  } catch(_) { /* non-fatal — will use fallback position */ }
+  } catch(_) { /* non-fatal */ }
   return items;
+}
+
+// Decode common PDF string escape sequences
+function decodePdfString(s) {
+  return s
+    .replace(/\\n/g, '\n')
+    .replace(/\\r/g, '\r')
+    .replace(/\\t/g, '\t')
+    .replace(/\\([0-7]{3})/g, (_, oct) => String.fromCharCode(parseInt(oct, 8)))
+    .replace(/\\\\/g, '\\')
+    .replace(/\\\(/g, '(')
+    .replace(/\\\)/g, ')');
 }
 
 function findAnchor(items, searchText) {
@@ -1341,13 +1456,30 @@ function loadSignature(input) {
   const file = input.files[0];
   if (!file) return;
   const reader = new FileReader();
-  reader.onload = e => {
-    sigData = e.target.result;
-    document.getElementById('sig-img').src = sigData;
-    document.getElementById('sig-preview-box').style.display = 'block';
-    toast('Signature uploaded successfully!');
+  reader.onload = ev => {
+    sigData = ev.target.result;
+    try { localStorage.setItem('sigData', sigData); } catch(_) {}
+    showSigPreview(sigData);
+    toast('Signature saved and ready to use!');
   };
   reader.readAsDataURL(file);
+}
+
+function restoreSignature() {
+  if (sigData) showSigPreview(sigData);
+}
+
+function showSigPreview(data) {
+  document.getElementById('sig-img').src = data;
+  document.getElementById('sig-preview-box').style.display = 'block';
+}
+
+function clearSignature() {
+  sigData = null;
+  try { localStorage.removeItem('sigData'); } catch(_) {}
+  document.getElementById('sig-preview-box').style.display = 'none';
+  document.getElementById('sig-img').src = '';
+  toast('Signature removed.');
 }
 
 function addManualPdf(input) {
