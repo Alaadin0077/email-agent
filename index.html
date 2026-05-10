@@ -1693,8 +1693,12 @@ async function signAndSend(id, placement) {
             const pageY  = (1 - normY) * pgH;
 
             if (isPO) {
-              // Place signature ABOVE the name: bottom of sig sits at pageY
-              autoSigY  = pageY;
+              // Place signature ABOVE the name.
+              // pageY is the Y of the name baseline (from bottom in pdf-lib).
+              // We want the signature to sit just above the name text,
+              // so sigY (bottom of signature) = pageY + sigH + 8
+              // meaning the signature image bottom is 8pt above the name.
+              autoSigY  = pageY + sigH + 8;
             } else {
               // OBD: place BELOW "Approved by"
               autoSigY  = pageY - sigH - 6;
