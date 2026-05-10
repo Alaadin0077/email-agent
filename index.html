@@ -1251,72 +1251,119 @@ async function signAndSend(id) {
     //   3. Return the first address that is NOT alaadinyacout@gulfmedical.com.
     //   4. Fall back to e.email only if every address in the thread is Alaadin's.
     //
+    // Block only @gulfmedical.com domain
     const ALAADIN_EMAIL = 'alaadinyacout@gulfmedical.com';
 
-    async function resolveRealRecipient() {
-      try {
-        // Get the conversationId of the current message
-        const msgMeta = await graphGet(
-          `/me/messages/${enc}?$select=conversationId,from,toRecipients,ccRecipients`
-        );
-        const convId = msgMeta.conversationId;
-        if (!convId) return null;
+    function isAlaadin(addr) {
+      if (!addr) return false;
+      return addr.toLowerCase().endsWith('@gulfmedical.com');
+    }
 
-        // Fetch all messages in this conversation, oldest first, pick From/To/CC
-        const threadData = await graphGet(
-          `/me/messages?$filter=conversationId eq '${convId}'` +
-          `&$orderby=receivedDateTime asc` +
-          `&$select=from,toRecipients,ccRecipients,receivedDateTime` +
-          `&$top=50`
-        );
-
-        const candidates = []; // { address, name } in order of appearance
-
-        for (const msg of threadData.value || []) {
-          // From field
-          const fromAddr = msg.from?.emailAddress?.address || '';
-          const fromName = msg.from?.emailAddress?.name   || '';
-          if (fromAddr) candidates.push({ address: fromAddr, name: fromName });
-
-          // To recipients
-          for (const r of msg.toRecipients || []) {
-            const a = r.emailAddress?.address || '';
-            const n = r.emailAddress?.name    || '';
-            if (a) candidates.push({ address: a, name: n });
-          }
-
-          // CC recipients
-          for (const r of msg.ccRecipients || []) {
-            const a = r.emailAddress?.address || '';
-            const n = r.emailAddress?.name    || '';
-            if (a) candidates.push({ address: a, name: n });
-          }
+    // Extract all email addresses from a plain-text body (handles forwarded headers)
+    function extractEmailsFromBody(bodyText) {
+      const results = [];
+      // Match standard email patterns
+      const emailRe = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g;
+      let m;
+      while ((m = emailRe.exec(bodyText)) !== null) {
+        const addr = m[0].toLowerCase();
+        if (!isAlaadin(addr)) {
+          results.push({ address: m[0], name: '' });
         }
-
-        // Return first address that is not Alaadin's
-        for (const c of candidates) {
-          if (c.address.toLowerCase() !== ALAADIN_EMAIL.toLowerCase()) {
-            return c;
-          }
-        }
-      } catch (threadErr) {
-        console.warn('[thread lookup] failed:', threadErr.message);
       }
-      return null; // fallback handled below
+      return results;
+    }
+
+    async function resolveRealRecipient() {
+      const candidates = []; // { address, name } — collected in priority order
+
+      try {
+        // ── Step 1: fetch this message's full metadata (To/CC/From) ──────────
+        const msgMeta = await graphGet(
+          `/me/messages/${enc}?$select=conversationId,from,toRecipients,ccRecipients,body`
+        );
+
+        // Collect To: recipients first (highest priority — explicit addressees)
+        for (const r of msgMeta.toRecipients || []) {
+          const a = r.emailAddress?.address || '';
+          const n = r.emailAddress?.name    || '';
+          if (a && !isAlaadin(a)) candidates.push({ address: a, name: n });
+        }
+
+        // CC recipients
+        for (const r of msgMeta.ccRecipients || []) {
+          const a = r.emailAddress?.address || '';
+          const n = r.emailAddress?.name    || '';
+          if (a && !isAlaadin(a)) candidates.push({ address: a, name: n });
+        }
+
+        // From (if not Alaadin — e.g. an external sender)
+        const fromAddr = msgMeta.from?.emailAddress?.address || '';
+        const fromName = msgMeta.from?.emailAddress?.name    || '';
+        if (fromAddr && !isAlaadin(fromAddr)) candidates.push({ address: fromAddr, name: fromName });
+
+        // ── Step 2: walk the full conversation thread ─────────────────────────
+        const convId = msgMeta.conversationId;
+        if (convId) {
+          const threadData = await graphGet(
+            `/me/messages?$filter=conversationId eq '${convId}'` +
+            `&$orderby=receivedDateTime asc` +
+            `&$select=from,toRecipients,ccRecipients` +
+            `&$top=50`
+          );
+
+          for (const msg of threadData.value || []) {
+            const fa = msg.from?.emailAddress?.address || '';
+            const fn = msg.from?.emailAddress?.name   || '';
+            if (fa && !isAlaadin(fa)) candidates.push({ address: fa, name: fn });
+
+            for (const r of [...(msg.toRecipients||[]), ...(msg.ccRecipients||[])]) {
+              const a = r.emailAddress?.address || '';
+              const n = r.emailAddress?.name    || '';
+              if (a && !isAlaadin(a)) candidates.push({ address: a, name: n });
+            }
+          }
+        }
+
+        // ── Step 3: scan email body for forwarded headers / inline addresses ──
+        // This catches cases like "From: supplier@example.com" in a forwarded email.
+        const bodyText = (msgMeta.body?.content || '')
+          .replace(/<[^>]+>/g, ' ')  // strip HTML tags
+          .replace(/&nbsp;/g, ' ');
+        const bodyEmails = extractEmailsFromBody(bodyText);
+        for (const be of bodyEmails) candidates.push(be);
+
+      } catch (err) {
+        console.warn('[thread lookup] failed:', err.message);
+
+        // ── Step 4: last resort — scan the already-loaded email body ─────────
+        const bodyEmails = extractEmailsFromBody(e.body || '');
+        for (const be of bodyEmails) candidates.push(be);
+      }
+
+      // Return first unique non-Alaadin candidate
+      const seen = new Set();
+      for (const cand of candidates) {
+        const lower = cand.address.toLowerCase();
+        if (!seen.has(lower)) {
+          seen.add(lower);
+          return cand;
+        }
+      }
+      return null;
     }
 
     toast('📤 Sending signed PDF…');
 
-    // Resolve recipient — fall back to e.email / e.from if thread lookup fails
     const resolved = await resolveRealRecipient();
-    const recipientAddress = resolved?.address || e.email;
-    const recipientName    = resolved?.name    || e.from;
 
-    // Safety check — if we still ended up with Alaadin's address, warn & stop
-    if (recipientAddress.toLowerCase() === ALAADIN_EMAIL.toLowerCase()) {
-      toast('⚠️ Could not find external recipient in thread. Please reply manually.');
+    if (!resolved) {
+      toast('⚠️ Could not find external recipient. Please reply manually.');
       return;
     }
+
+    const recipientAddress = resolved.address;
+    const recipientName    = resolved.name || recipientAddress.split('@')[0];
 
     const greetingName = (recipientName.split(' ')[0]) || 'Sir/Madam';
 
