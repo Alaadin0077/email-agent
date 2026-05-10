@@ -1274,6 +1274,53 @@ Critical rules:
   return result;
 }
 
+// ── fetchValidPdf ────────────────────────────────────────────
+// Fetches all attachments from a message and returns the first one
+// that is a valid PDF (has %PDF header). Tries every attachment,
+// not just the one with a .pdf extension, because some mail clients
+// send PDFs with wrong extensions or embed them without one.
+//
+async function fetchValidPdf(enc) {
+  const attachList = await graphGet(`/me/messages/${enc}/attachments`);
+  const all = attachList.value || [];
+
+  if (!all.length) throw new Error('No attachments found in this email.');
+
+  // Try .pdf extensions first, then all others
+  const sorted = [
+    ...all.filter(a => a.name?.toLowerCase().endsWith('.pdf')),
+    ...all.filter(a => !a.name?.toLowerCase().endsWith('.pdf'))
+  ];
+
+  const errors = [];
+  for (const meta of sorted) {
+    try {
+      const full = await graphGet(
+        `/me/messages/${enc}/attachments/${encodeURIComponent(meta.id)}`
+      );
+      if (!full.contentBytes) continue;
+
+      // Validate PDF header — first 4 bytes must be %PDF
+      const bytes = Uint8Array.from(atob(full.contentBytes), ch => ch.charCodeAt(0));
+      const header = String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]);
+      if (header !== '%PDF') {
+        errors.push(`${meta.name}: not a valid PDF (header: "${header}")`);
+        continue;
+      }
+
+      // Valid PDF found
+      console.log('[fetchValidPdf] using attachment:', meta.name);
+      return { bytes, name: full.name || meta.name, base64: full.contentBytes };
+    } catch(e) {
+      errors.push(`${meta.name}: ${e.message}`);
+    }
+  }
+
+  throw new Error(
+    `No valid PDF found in ${all.length} attachment(s). Details: ` + errors.join(' | ')
+  );
+}
+
 // ── PLACEMENT MODAL ──────────────────────────────────────────
 //
 // Opens a full-screen PDF preview. User clicks the exact spot for
@@ -1302,18 +1349,14 @@ async function openPlacementModal() {
   toast('📎 Loading PDF preview…');
   try {
     const enc = encodeURIComponent(targetId);
-    const attachList = await graphGet(`/me/messages/${enc}/attachments`);
-    const pdfMeta = attachList.value?.find(a => a.name?.toLowerCase().endsWith('.pdf'));
-    if (!pdfMeta) { toast('❌ No PDF attachment found.'); return; }
-    const fullAttach = await graphGet(`/me/messages/${enc}/attachments/${encodeURIComponent(pdfMeta.id)}`);
-    if (!fullAttach.contentBytes) { toast('❌ Could not download PDF.'); return; }
+    const pdf = await fetchValidPdf(enc);
 
-    modalPdfBase64  = fullAttach.contentBytes;
-    modalAttachName = fullAttach.name;
+    modalPdfBase64  = pdf.base64;
+    modalAttachName = pdf.name;
     modalEmailId    = targetId;
 
     // Load with PDF.js for rendering
-    const rawBytes = Uint8Array.from(atob(modalPdfBase64), ch => ch.charCodeAt(0));
+    const rawBytes = pdf.bytes;
     modalPdfjsDoc  = await pdfjsLib.getDocument({ data: rawBytes }).promise;
     modalTotalPages = modalPdfjsDoc.numPages;
     modalPageNum    = modalTotalPages; // default: last page (where signatures usually are)
@@ -1477,13 +1520,9 @@ async function signAndSend(id, placement) {
       const pdfMeta = attachList.value?.find(a => a.name?.toLowerCase().endsWith('.pdf'));
       fullAttach = { name: pdfMeta?.name || 'document.pdf', contentBytes: modalPdfBase64 };
     } else {
-      const attachList = await graphGet(`/me/messages/${enc}/attachments`);
-      const pdfMeta = attachList.value?.find(a => a.name?.toLowerCase().endsWith('.pdf'));
-      if (!pdfMeta) { toast('❌ No PDF attachment found.'); return; }
-      fullAttach = await graphGet(`/me/messages/${enc}/attachments/${encodeURIComponent(pdfMeta.id)}`);
-      if (!fullAttach.contentBytes) { toast('❌ Could not download PDF content.'); return; }
-      const pdfBytes = Uint8Array.from(atob(fullAttach.contentBytes), c => c.charCodeAt(0));
-      pdfDoc = await PDFLib.PDFDocument.load(pdfBytes);
+      const pdf = await fetchValidPdf(enc);
+      fullAttach = { name: pdf.name, contentBytes: pdf.base64 };
+      pdfDoc = await PDFLib.PDFDocument.load(pdf.bytes);
     }
 
     // ── 2. Detect document type from subject + body ───────────
