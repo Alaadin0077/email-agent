@@ -4,335 +4,745 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>AI Email Agent</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,300&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet" />
 <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@3.10.0/lib/msal-browser.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
 <style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  :root {
-    --blue: #0078d4; --blue-dark: #106ebe; --blue-light: #EBF3FB;
-    --green: #0F6E56; --green-light: #E1F5EE; --green-border: #9FE1CB;
-    --red: #E24B4A; --red-light: #FCEBEB;
-    --amber-light: #FAEEDA; --amber: #854F0B;
-    --purple-light: #EEEDFE; --purple: #3C3489;
-    --gray-bg: #F5F5F5; --gray-border: #E0E0E0; --gray-text: #555;
-    --text: #1a1a1a; --text-muted: #666; --text-hint: #999;
-    --bg: #ffffff; --bg-secondary: #F8F8F8;
-    --radius: 8px; --radius-lg: 12px;
-    --shadow: 0 1px 4px rgba(0,0,0,0.08);
-  }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--gray-bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-  /* PASSWORD GATE */
-  #gate-screen { flex: 1; display: flex; align-items: center; justify-content: center; background: var(--gray-bg); }
-  .gate-card { background: var(--bg); border-radius: var(--radius-lg); border: 1px solid var(--gray-border); padding: 40px 36px; max-width: 380px; width: 100%; text-align: center; box-shadow: var(--shadow); }
-  .gate-logo { width: 56px; height: 56px; border-radius: 14px; background: #1a1a1a; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 20px; font-size: 26px; }
-  .gate-title { font-size: 20px; font-weight: 600; margin-bottom: 6px; }
-  .gate-sub { font-size: 13px; color: var(--text-muted); margin-bottom: 24px; }
-  .gate-input { width: 100%; padding: 11px 14px; border-radius: var(--radius); border: 1px solid var(--gray-border); font-size: 15px; color: var(--text); outline: none; text-align: center; letter-spacing: 3px; margin-bottom: 12px; }
-  .gate-input:focus { border-color: var(--blue); }
-  .gate-btn { width: 100%; padding: 11px; border-radius: var(--radius); background: #1a1a1a; color: white; font-size: 14px; font-weight: 500; border: none; cursor: pointer; transition: background .15s; }
-  .gate-btn:hover { background: #333; }
-  .gate-error { font-size: 12px; color: var(--red); margin-top: 10px; display: none; }
-  .gate-attempts { font-size: 11px; color: var(--text-hint); margin-top: 8px; }
+:root {
+  --ink: #0f0f0f;
+  --ink-2: #3a3a3a;
+  --ink-3: #6b6b6b;
+  --ink-4: #9e9e9e;
+  --ink-5: #c8c8c8;
+  --ink-6: #e8e8e8;
+  --ink-7: #f4f4f4;
+  --ink-8: #fafafa;
+  --white: #ffffff;
 
-  /* LOGIN SCREEN */
-  #login-screen { flex: 1; display: flex; align-items: center; justify-content: center; background: var(--gray-bg); }
-  .login-card { background: var(--bg); border-radius: var(--radius-lg); border: 1px solid var(--gray-border); padding: 40px 36px; max-width: 420px; width: 100%; text-align: center; box-shadow: var(--shadow); }
-  .login-logo { width: 56px; height: 56px; border-radius: 14px; background: var(--blue); display: inline-flex; align-items: center; justify-content: center; margin-bottom: 20px; }
-  .login-logo svg { width: 28px; height: 28px; fill: white; }
-  .login-title { font-size: 22px; font-weight: 600; margin-bottom: 8px; }
-  .login-sub { font-size: 14px; color: var(--text-muted); margin-bottom: 28px; line-height: 1.6; }
-  .features-list { text-align: left; margin-bottom: 28px; display: flex; flex-direction: column; gap: 10px; }
-  .feat { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--text-muted); }
-  .feat-icon { width: 28px; height: 28px; border-radius: 7px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 14px; }
-  .feat-icon.blue { background: var(--blue-light); }
-  .feat-icon.green { background: var(--green-light); }
-  .feat-icon.amber { background: var(--amber-light); }
-  .feat-icon.purple { background: var(--purple-light); }
-  .login-btn { width: 100%; padding: 12px; border-radius: var(--radius); background: var(--blue); color: white; font-size: 15px; font-weight: 500; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 10px; transition: background .15s; }
-  .login-btn:hover { background: var(--blue-dark); }
-  .login-btn svg { width: 20px; height: 20px; }
-  .login-note { font-size: 11px; color: var(--text-hint); margin-top: 14px; }
+  --blue: #1a6cf0;
+  --blue-mid: #0e4ebc;
+  --blue-soft: #eaf1ff;
+  --blue-border: #c2d8ff;
 
-  /* APP SHELL */
-  #app { display: none; flex-direction: column; height: 100vh; overflow: hidden; }
-  .topbar { display: flex; align-items: center; justify-content: space-between; padding: 0 18px; height: 52px; background: var(--bg); border-bottom: 1px solid var(--gray-border); flex-shrink: 0; }
-  .topbar-left { display: flex; align-items: center; gap: 10px; }
-  .topbar-logo { width: 28px; height: 28px; border-radius: 7px; background: var(--blue); display: flex; align-items: center; justify-content: center; }
-  .topbar-logo svg { width: 14px; height: 14px; fill: white; }
-  .topbar-title { font-size: 15px; font-weight: 600; }
-  .topbar-right { display: flex; align-items: center; gap: 10px; }
-  .user-pill { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text-muted); padding: 4px 10px; border-radius: 20px; border: 1px solid var(--gray-border); background: var(--bg-secondary); }
-  .user-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
-  .signout-btn { font-size: 12px; color: var(--text-hint); background: none; border: none; cursor: pointer; padding: 4px 8px; border-radius: var(--radius); }
-  .signout-btn:hover { background: var(--gray-bg); color: var(--text-muted); }
+  --green: #0b8f6a;
+  --green-soft: #e4f7f1;
+  --green-border: #9ee3cc;
 
-  .layout { display: flex; flex: 1; overflow: hidden; }
+  --amber: #b06500;
+  --amber-soft: #fff4e0;
+  --amber-border: #ffd07a;
 
-  /* SIDEBAR */
-  .sidebar { width: 200px; min-width: 200px; background: var(--bg); border-right: 1px solid var(--gray-border); display: flex; flex-direction: column; overflow-y: auto; padding: 10px 0; }
-  .nav-section { font-size: 10px; font-weight: 600; color: var(--text-hint); padding: 10px 14px 4px; text-transform: uppercase; letter-spacing: .08em; }
-  .nav-item { display: flex; align-items: center; gap: 8px; padding: 8px 14px; font-size: 13px; color: var(--text-muted); cursor: pointer; border-left: 2px solid transparent; transition: all .12s; }
-  .nav-item:hover { background: var(--gray-bg); color: var(--text); }
-  .nav-item.active { color: var(--blue); border-left-color: var(--blue); background: var(--blue-light); font-weight: 500; }
-  .nav-item .icon { font-size: 16px; width: 18px; text-align: center; }
-  .nbadge { margin-left: auto; font-size: 10px; font-weight: 600; background: var(--blue); color: white; padding: 1px 6px; border-radius: 10px; }
-  .nbadge.red { background: var(--red); }
-  .nbadge.gray { background: var(--gray-text); }
+  --red: #d43b3b;
+  --red-soft: #fdf0f0;
+  --red-border: #f4b4b4;
 
-  /* MAIN */
-  .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: var(--gray-bg); }
-  .toolbar { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: var(--bg); border-bottom: 1px solid var(--gray-border); flex-shrink: 0; }
-  .tbtn { display: flex; align-items: center; gap: 5px; padding: 6px 12px; border-radius: var(--radius); border: 1px solid var(--gray-border); font-size: 12px; color: var(--text-muted); cursor: pointer; background: var(--bg); transition: all .12s; }
-  .tbtn:hover { background: var(--gray-bg); color: var(--text); }
-  .tbtn.primary { background: var(--blue); color: white; border-color: var(--blue); }
-  .tbtn.primary:hover { background: var(--blue-dark); }
-  .tbtn .icon { font-size: 14px; }
-  .sp { flex: 1; }
-  .search-wrap { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: var(--radius); border: 1px solid var(--gray-border); background: var(--bg-secondary); }
-  .search-wrap input { border: none; background: transparent; outline: none; font-size: 12px; color: var(--text); width: 160px; }
+  --purple: #5b3fc4;
+  --purple-soft: #f0edfb;
 
-  /* INBOX LAYOUT */
-  .inbox-layout { display: flex; flex: 1; overflow: hidden; }
-  .email-list { width: 300px; min-width: 300px; overflow-y: auto; background: var(--bg); border-right: 1px solid var(--gray-border); }
-  .eitem { display: flex; align-items: flex-start; gap: 9px; padding: 11px 12px; cursor: pointer; border-bottom: 1px solid var(--gray-border); transition: background .1s; }
-  .eitem:hover { background: var(--gray-bg); }
-  .eitem.sel { background: var(--blue-light); }
-  .udot { width: 7px; height: 7px; border-radius: 50%; background: var(--blue); margin-top: 5px; flex-shrink: 0; }
-  .rdot { width: 7px; height: 7px; flex-shrink: 0; }
-  .avatar { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; flex-shrink: 0; }
-  .econtent { flex: 1; min-width: 0; }
-  .eheader { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; }
-  .esender { font-size: 12px; color: var(--text-muted); }
-  .eitem.unread .esender { font-weight: 600; color: var(--text); }
-  .esubject { font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 3px; }
-  .eitem.unread .esubject { font-weight: 500; color: var(--text); }
-  .eprev { font-size: 11px; color: var(--text-hint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .etime { font-size: 10px; color: var(--text-hint); white-space: nowrap; }
-  .etags { display: flex; gap: 3px; margin-top: 4px; flex-wrap: wrap; }
-  .tag { font-size: 9px; padding: 1px 5px; border-radius: 8px; font-weight: 600; }
-  .tag-urgent { background: var(--red-light); color: #A32D2D; }
-  .tag-reply { background: var(--blue-light); color: #0C447C; }
-  .tag-sign { background: var(--green-light); color: var(--green); }
-  .tag-invoice { background: var(--amber-light); color: var(--amber); }
-  .tag-client { background: var(--green-light); color: var(--green); }
-  .tag-supplier { background: var(--blue-light); color: #0C447C; }
-  .tag-hr { background: var(--purple-light); color: var(--purple); }
+  --r: 6px;
+  --r-lg: 10px;
+  --r-xl: 14px;
 
-  /* DETAIL PANEL */
-  .detail { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: var(--bg); }
-  .empty-state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--text-hint); }
-  .empty-state .big-icon { font-size: 48px; opacity: .3; }
-  .empty-state p { font-size: 13px; }
-  .dheader { padding: 14px 16px; border-bottom: 1px solid var(--gray-border); flex-shrink: 0; }
-  .dsubject { font-size: 15px; font-weight: 600; margin-bottom: 8px; }
-  .dmeta { display: flex; flex-direction: column; gap: 3px; }
-  .drow { display: flex; gap: 8px; font-size: 12px; }
-  .dlabel { color: var(--text-hint); min-width: 38px; }
-  .dval { color: var(--text-muted); }
-  .dbody { padding: 14px 16px; font-size: 13px; color: var(--text-muted); line-height: 1.7; overflow-y: auto; flex: 1; border-bottom: 1px solid var(--gray-border); white-space: pre-wrap; }
-  .ai-area { padding: 12px 16px; flex-shrink: 0; background: var(--bg-secondary); border-top: 1px solid var(--gray-border); }
-  .ai-label { display: flex; align-items: center; gap: 6px; font-size: 10px; font-weight: 700; color: var(--text-hint); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 8px; }
-  .ai-label .icon { font-size: 14px; color: var(--blue); }
-  .action-pill { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 20px; margin-bottom: 8px; }
-  .action-pill.reply { background: var(--blue-light); color: #0C447C; }
-  .action-pill.sign { background: var(--green-light); color: var(--green); }
-  .action-pill.none { background: var(--gray-bg); color: var(--text-hint); }
-  .draft-box { background: var(--bg); border: 1px solid var(--gray-border); border-radius: var(--radius); padding: 10px 12px; font-size: 12px; color: var(--text-muted); line-height: 1.65; margin-bottom: 10px; white-space: pre-wrap; max-height: 120px; overflow-y: auto; }
-  .draft-box[contenteditable=true] { outline: none; border-color: var(--blue); }
-  .sign-notice { background: var(--green-light); border: 1px solid var(--green-border); border-radius: var(--radius); padding: 10px 12px; font-size: 12px; color: var(--green); margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
-  .sign-notice .icon { font-size: 20px; flex-shrink: 0; }
-  .dactions { display: flex; gap: 6px; }
-  .dact { flex: 1; padding: 7px; border-radius: var(--radius); border: 1px solid var(--gray-border); font-size: 12px; color: var(--text-muted); cursor: pointer; background: var(--bg); text-align: center; transition: all .12s; display: flex; align-items: center; justify-content: center; gap: 4px; }
-  .dact:hover { background: var(--gray-bg); }
-  .dact.send { background: var(--blue); color: white; border-color: var(--blue); }
-  .dact.send:hover { background: var(--blue-dark); }
-  .dact.sign-send { background: var(--green); color: white; border-color: var(--green); }
-  .dact.sign-send:hover { background: #085041; }
-  .dact:disabled { opacity: .5; cursor: not-allowed; }
+  --font: 'DM Sans', system-ui, sans-serif;
+  --mono: 'DM Mono', monospace;
+}
 
-  /* PANELS */
-  .panel { flex: 1; padding: 18px; overflow-y: auto; display: none; flex-direction: column; gap: 14px; background: var(--gray-bg); }
-  .panel.vis { display: flex; }
-  .panel-title { font-size: 15px; font-weight: 600; color: var(--text); }
-  .panel-sub { font-size: 12px; color: var(--text-muted); line-height: 1.6; margin-top: -6px; }
+body {
+  font-family: var(--font);
+  background: var(--ink-7);
+  color: var(--ink);
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
 
-  /* PDF PANEL */
-  .upload-zone { border: 2px dashed var(--gray-border); border-radius: var(--radius-lg); padding: 22px; text-align: center; cursor: pointer; transition: all .15s; background: var(--bg); }
-  .upload-zone:hover { border-color: var(--blue); background: var(--blue-light); }
-  .upload-zone .big-icon { font-size: 28px; display: block; margin-bottom: 6px; color: var(--text-hint); }
-  .upload-zone p { font-size: 13px; color: var(--text-muted); font-weight: 500; }
-  .upload-zone span { font-size: 11px; color: var(--text-hint); }
-  .sig-preview { text-align: center; padding: 12px; border: 1px solid var(--gray-border); border-radius: var(--radius); background: var(--bg); }
-  .sig-preview img { max-height: 60px; }
-  .sig-preview p { font-size: 11px; color: var(--text-hint); margin-bottom: 6px; }
-  .pdf-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--gray-border); border-radius: var(--radius); background: var(--bg); }
-  .pdf-item .icon { font-size: 20px; color: var(--red); flex-shrink: 0; }
-  .pdf-name { flex: 1; font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .pdf-status { font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 10px; }
-  .pdf-signed { background: var(--green-light); color: var(--green); }
-  .pdf-pending { background: var(--amber-light); color: var(--amber); }
-  .sign-btn-sm { padding: 4px 10px; border-radius: var(--radius); border: 1px solid var(--blue); color: var(--blue); font-size: 11px; cursor: pointer; background: transparent; }
-  .sign-btn-sm:hover { background: var(--blue-light); }
+/* ── GATE ── */
+#gate-screen {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--ink-7);
+}
+.gate-card {
+  background: var(--white);
+  border: 1px solid var(--ink-6);
+  border-radius: var(--r-xl);
+  padding: 44px 40px;
+  width: 100%;
+  max-width: 380px;
+  text-align: center;
+  box-shadow: 0 2px 24px rgba(0,0,0,0.06);
+}
+.gate-mark {
+  width: 52px;
+  height: 52px;
+  background: var(--ink);
+  border-radius: 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 22px;
+}
+.gate-mark svg { width: 24px; height: 24px; fill: none; stroke: white; stroke-width: 2; stroke-linecap: round; }
+.gate-h { font-size: 18px; font-weight: 600; letter-spacing: -.3px; margin-bottom: 5px; }
+.gate-s { font-size: 13px; color: var(--ink-3); margin-bottom: 26px; }
+.gate-input {
+  width: 100%;
+  padding: 11px 14px;
+  border: 1px solid var(--ink-5);
+  border-radius: var(--r);
+  font-family: var(--mono);
+  font-size: 16px;
+  letter-spacing: 6px;
+  text-align: center;
+  color: var(--ink);
+  background: var(--white);
+  outline: none;
+  transition: border-color .15s;
+  margin-bottom: 10px;
+}
+.gate-input:focus { border-color: var(--blue); }
+.gate-btn {
+  width: 100%;
+  padding: 11px;
+  border-radius: var(--r);
+  background: var(--ink);
+  color: white;
+  font-family: var(--font);
+  font-size: 14px;
+  font-weight: 500;
+  border: none;
+  cursor: pointer;
+  transition: background .12s, transform .08s;
+  letter-spacing: -.1px;
+}
+.gate-btn:hover { background: #2a2a2a; }
+.gate-btn:active { transform: scale(.99); }
+.gate-err { font-size: 12px; color: var(--red); margin-top: 10px; display: none; }
 
-  /* GUIDELINES PANEL */
-  .gl-card { border: 1px solid var(--gray-border); border-radius: var(--radius); padding: 10px 12px; background: var(--bg); }
-  .gl-header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
-  .gl-icon { font-size: 15px; color: var(--blue); }
-  .gl-title { font-size: 13px; font-weight: 600; flex: 1; }
-  .gl-remove { background: none; border: none; cursor: pointer; color: var(--text-hint); font-size: 14px; padding: 2px; border-radius: 4px; }
-  .gl-remove:hover { color: var(--red); background: var(--red-light); }
-  .gl-desc { font-size: 12px; color: var(--text-muted); line-height: 1.55; }
-  .gl-trigger-pill { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 8px; background: var(--blue-light); color: #0C447C; margin-top: 5px; }
-  .add-gl-form { border: 1px dashed var(--gray-border); border-radius: var(--radius); padding: 12px; background: var(--bg); display: flex; flex-direction: column; gap: 8px; }
-  .add-gl-form label { font-size: 11px; font-weight: 600; color: var(--text-muted); }
-  .add-gl-form input, .add-gl-form textarea { width: 100%; border: 1px solid var(--gray-border); border-radius: var(--radius); padding: 7px 10px; font-size: 12px; color: var(--text); background: var(--bg); outline: none; font-family: inherit; }
-  .add-gl-form input:focus, .add-gl-form textarea:focus { border-color: var(--blue); }
-  .add-gl-form textarea { resize: vertical; min-height: 60px; }
-  .form-row { display: flex; gap: 8px; }
-  .save-btn { padding: 7px 14px; border-radius: var(--radius); background: var(--blue); color: white; font-size: 12px; font-weight: 500; border: none; cursor: pointer; }
-  .save-btn:hover { background: var(--blue-dark); }
-  .cancel-btn { padding: 7px 14px; border-radius: var(--radius); background: var(--bg); color: var(--text-muted); font-size: 12px; border: 1px solid var(--gray-border); cursor: pointer; }
-  .add-gl-btn { display: flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: var(--radius); border: 1px dashed var(--gray-border); font-size: 12px; color: var(--text-muted); cursor: pointer; background: var(--bg); width: fit-content; transition: all .12s; }
-  .add-gl-btn:hover { border-color: var(--blue); color: var(--blue); background: var(--blue-light); }
+/* ── LOGIN ── */
+#login-screen {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--ink-7);
+}
+.login-card {
+  background: var(--white);
+  border: 1px solid var(--ink-6);
+  border-radius: var(--r-xl);
+  padding: 44px 40px;
+  width: 100%;
+  max-width: 420px;
+  box-shadow: 0 2px 24px rgba(0,0,0,0.06);
+}
+.login-mark {
+  width: 48px;
+  height: 48px;
+  background: var(--blue);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 20px;
+}
+.login-mark svg { width: 22px; height: 22px; fill: white; }
+.login-h { font-size: 22px; font-weight: 600; letter-spacing: -.4px; margin-bottom: 7px; }
+.login-s { font-size: 13px; color: var(--ink-3); line-height: 1.65; margin-bottom: 26px; }
+.features { display: flex; flex-direction: column; gap: 9px; margin-bottom: 28px; }
+.feat { display: flex; align-items: center; gap: 11px; font-size: 13px; color: var(--ink-3); }
+.feat-dot {
+  width: 30px; height: 30px;
+  border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px;
+  flex-shrink: 0;
+}
+.feat-dot.b { background: var(--blue-soft); }
+.feat-dot.g { background: var(--green-soft); }
+.feat-dot.a { background: var(--amber-soft); }
+.feat-dot.p { background: var(--purple-soft); }
+.ms-btn {
+  width: 100%;
+  padding: 12px 16px;
+  border: 1px solid var(--ink-5);
+  border-radius: var(--r);
+  background: var(--white);
+  color: var(--ink);
+  font-family: var(--font);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  transition: background .12s, border-color .12s;
+  letter-spacing: -.1px;
+}
+.ms-btn:hover { background: var(--ink-8); border-color: var(--ink-4); }
+.ms-btn svg { width: 18px; height: 18px; }
+.login-note { font-size: 11px; color: var(--ink-4); text-align: center; margin-top: 13px; }
+.err-box {
+  background: var(--red-soft);
+  border: 1px solid var(--red-border);
+  border-radius: var(--r);
+  padding: 10px 14px;
+  font-size: 12px;
+  color: var(--red);
+  margin-top: 12px;
+  display: none;
+}
 
-  /* TOAST */
-  .toast { position: fixed; bottom: 24px; right: 24px; background: #1a1a1a; color: white; font-size: 13px; padding: 10px 18px; border-radius: var(--radius); z-index: 999; display: none; animation: slideup .25s; }
-  .toast.show { display: block; }
-  @keyframes slideup { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+/* ── APP SHELL ── */
+#app { display: none; flex-direction: column; height: 100vh; overflow: hidden; }
 
-  /* LOADING */
-  .loading { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-muted); padding: 20px; }
-  .spinner { width: 16px; height: 16px; border: 2px solid var(--gray-border); border-top-color: var(--blue); border-radius: 50%; animation: spin .7s linear infinite; }
-  @keyframes spin { to { transform: rotate(360deg); } }
+.topbar {
+  height: 54px;
+  background: var(--white);
+  border-bottom: 1px solid var(--ink-6);
+  display: flex;
+  align-items: center;
+  padding: 0 18px;
+  gap: 12px;
+  flex-shrink: 0;
+}
+.tb-logo {
+  width: 30px; height: 30px;
+  background: var(--blue);
+  border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.tb-logo svg { width: 14px; height: 14px; fill: white; }
+.tb-title { font-size: 15px; font-weight: 600; letter-spacing: -.3px; }
+.tb-space { flex: 1; }
+.tb-status {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 12px; color: var(--ink-3);
+  background: var(--ink-8);
+  border: 1px solid var(--ink-6);
+  border-radius: 20px;
+  padding: 4px 12px;
+}
+.tb-dot { width: 6px; height: 6px; border-radius: 50%; background: #22c55e; flex-shrink: 0; }
+.tb-signout {
+  font-size: 12px; color: var(--ink-4);
+  background: none; border: none; cursor: pointer;
+  padding: 4px 8px; border-radius: var(--r);
+  font-family: var(--font);
+  transition: color .12s, background .12s;
+}
+.tb-signout:hover { color: var(--ink-2); background: var(--ink-7); }
 
-  .error-msg { background: var(--red-light); border: 1px solid #F7C1C1; border-radius: var(--radius); padding: 10px 14px; font-size: 12px; color: #A32D2D; }
+.layout { display: flex; flex: 1; overflow: hidden; }
+
+/* ── SIDEBAR ── */
+.sidebar {
+  width: 210px;
+  min-width: 210px;
+  background: var(--white);
+  border-right: 1px solid var(--ink-6);
+  display: flex;
+  flex-direction: column;
+  padding: 10px 8px;
+  overflow-y: auto;
+  gap: 1px;
+}
+.nav-group { font-size: 10px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--ink-4); padding: 10px 8px 4px; }
+.nav-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 9px;
+  border-radius: var(--r);
+  font-size: 13px; color: var(--ink-3);
+  cursor: pointer;
+  transition: all .1s;
+  border: 1px solid transparent;
+  user-select: none;
+}
+.nav-item:hover { background: var(--ink-7); color: var(--ink); }
+.nav-item.active { background: var(--blue-soft); color: var(--blue-mid); border-color: var(--blue-border); font-weight: 500; }
+.nav-ic { font-size: 15px; width: 17px; text-align: center; }
+.nbadge {
+  margin-left: auto;
+  font-size: 10px; font-weight: 600;
+  background: var(--blue);
+  color: white;
+  padding: 1px 6px;
+  border-radius: 20px;
+  min-width: 20px; text-align: center;
+}
+.nbadge.red { background: var(--red); }
+.nbadge.dim { background: var(--ink-5); color: var(--ink-2); }
+
+/* ── MAIN AREA ── */
+.main { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: var(--ink-7); }
+
+.toolbar {
+  background: var(--white);
+  border-bottom: 1px solid var(--ink-6);
+  padding: 9px 14px;
+  display: flex; align-items: center; gap: 7px;
+  flex-shrink: 0;
+}
+.tbtn {
+  display: flex; align-items: center; gap: 5px;
+  padding: 7px 13px;
+  border-radius: var(--r);
+  border: 1px solid var(--ink-5);
+  font-size: 12px; font-weight: 500;
+  color: var(--ink-2);
+  cursor: pointer;
+  background: var(--white);
+  font-family: var(--font);
+  transition: all .1s;
+  letter-spacing: -.1px;
+}
+.tbtn:hover { background: var(--ink-7); border-color: var(--ink-4); }
+.tbtn.blue { background: var(--blue); color: white; border-color: var(--blue); }
+.tbtn.blue:hover { background: var(--blue-mid); border-color: var(--blue-mid); }
+.tbtn .ic { font-size: 14px; }
+.tb-sp { flex: 1; }
+.search-box {
+  display: flex; align-items: center; gap: 7px;
+  background: var(--ink-7);
+  border: 1px solid var(--ink-5);
+  border-radius: var(--r);
+  padding: 6px 11px;
+  transition: border-color .12s;
+}
+.search-box:focus-within { border-color: var(--blue); background: var(--white); }
+.search-box .s-ic { font-size: 13px; color: var(--ink-4); }
+.search-box input { border: none; background: transparent; outline: none; font-size: 12px; color: var(--ink); font-family: var(--font); width: 170px; }
+.search-box input::placeholder { color: var(--ink-4); }
+
+/* ── INBOX LAYOUT ── */
+.inbox-layout { display: flex; flex: 1; overflow: hidden; }
+.email-list {
+  width: 310px; min-width: 310px;
+  background: var(--white);
+  border-right: 1px solid var(--ink-6);
+  overflow-y: auto;
+}
+.list-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px 20px; gap: 8px; color: var(--ink-4); }
+.list-empty .big { font-size: 36px; opacity: .4; }
+.list-empty p { font-size: 12px; }
+.loading-row { display: flex; align-items: center; gap: 9px; padding: 18px 16px; font-size: 13px; color: var(--ink-3); }
+.spin { width: 15px; height: 15px; border: 2px solid var(--ink-5); border-top-color: var(--blue); border-radius: 50%; animation: spin .65s linear infinite; flex-shrink: 0; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.eitem {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 12px 14px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--ink-7);
+  transition: background .1s;
+  position: relative;
+}
+.eitem:hover { background: var(--ink-8); }
+.eitem.sel { background: var(--blue-soft); }
+.eitem.sel .esubj { color: var(--blue-mid); }
+.unread-bar { width: 3px; background: var(--blue); border-radius: 2px; position: absolute; left: 0; top: 12px; bottom: 12px; }
+.avatar {
+  width: 34px; height: 34px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 600;
+  flex-shrink: 0; margin-top: 1px;
+}
+.ecol { flex: 1; min-width: 0; }
+.erow1 { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 2px; }
+.ename { font-size: 12px; color: var(--ink-3); }
+.eitem.unread .ename { font-weight: 600; color: var(--ink); }
+.etime { font-size: 10px; color: var(--ink-4); white-space: nowrap; flex-shrink: 0; }
+.esubj { font-size: 12px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 3px; }
+.eitem.unread .esubj { font-weight: 500; color: var(--ink); }
+.eprev { font-size: 11px; color: var(--ink-4); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 4px; }
+.etags { display: flex; gap: 3px; flex-wrap: wrap; }
+.tag {
+  font-size: 9px; font-weight: 600;
+  padding: 2px 6px; border-radius: 4px;
+  text-transform: uppercase; letter-spacing: .04em;
+}
+.tag-urgent { background: var(--red-soft); color: var(--red); }
+.tag-reply { background: var(--blue-soft); color: var(--blue-mid); }
+.tag-sign { background: var(--green-soft); color: var(--green); }
+.tag-invoice { background: var(--amber-soft); color: var(--amber); }
+.tag-client { background: var(--green-soft); color: var(--green); }
+.tag-supplier { background: var(--blue-soft); color: var(--blue-mid); }
+.tag-hr { background: var(--purple-soft); color: var(--purple); }
+
+/* ── DETAIL PANEL ── */
+.detail { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: var(--white); }
+.detail-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: var(--ink-5); background: var(--ink-8); }
+.detail-empty .d-icon { font-size: 44px; opacity: .3; }
+.detail-empty p { font-size: 12px; color: var(--ink-4); }
+
+.d-head { padding: 16px 20px; border-bottom: 1px solid var(--ink-6); flex-shrink: 0; }
+.d-subj { font-size: 16px; font-weight: 600; letter-spacing: -.3px; margin-bottom: 10px; line-height: 1.3; }
+.d-meta { display: flex; flex-direction: column; gap: 4px; }
+.d-meta-row { display: flex; gap: 10px; font-size: 12px; }
+.d-lbl { color: var(--ink-4); min-width: 36px; }
+.d-val { color: var(--ink-2); }
+.d-tags { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+
+.d-body {
+  padding: 18px 20px;
+  font-size: 13px; color: var(--ink-2);
+  line-height: 1.75;
+  overflow-y: auto; flex: 1;
+  white-space: pre-wrap;
+  border-bottom: 1px solid var(--ink-6);
+}
+
+.ai-panel { padding: 14px 20px; flex-shrink: 0; background: var(--ink-8); border-top: 1px solid var(--ink-6); }
+.ai-header {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 10px; font-weight: 700;
+  color: var(--ink-4); text-transform: uppercase;
+  letter-spacing: .08em; margin-bottom: 10px;
+}
+.ai-header-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--blue); }
+
+.action-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11px; font-weight: 600;
+  padding: 4px 10px; border-radius: 6px;
+  margin-bottom: 10px;
+}
+.action-chip.reply { background: var(--blue-soft); color: var(--blue-mid); }
+.action-chip.sign { background: var(--green-soft); color: var(--green); }
+.action-chip.none { background: var(--ink-7); color: var(--ink-3); }
+
+.draft-area {
+  background: var(--white);
+  border: 1px solid var(--ink-5);
+  border-radius: var(--r);
+  padding: 11px 13px;
+  font-size: 12px; color: var(--ink-2);
+  line-height: 1.7;
+  font-family: var(--font);
+  margin-bottom: 10px;
+  white-space: pre-wrap;
+  max-height: 130px;
+  overflow-y: auto;
+  outline: none;
+  transition: border-color .12s;
+}
+.draft-area:focus { border-color: var(--blue); }
+
+.sign-card {
+  background: var(--white);
+  border: 1px solid var(--green-border);
+  border-radius: var(--r);
+  padding: 11px 13px;
+  display: flex; align-items: flex-start; gap: 10px;
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+.sign-card .sc-icon { font-size: 22px; flex-shrink: 0; line-height: 1; }
+.sign-card-title { font-weight: 600; color: var(--green); margin-bottom: 2px; }
+.sign-card-sub { font-size: 11px; color: var(--ink-3); }
+
+.d-actions { display: flex; gap: 7px; }
+.dact {
+  flex: 1;
+  padding: 8px 12px;
+  border-radius: var(--r);
+  border: 1px solid var(--ink-5);
+  font-size: 12px; font-weight: 500;
+  color: var(--ink-2);
+  cursor: pointer;
+  background: var(--white);
+  font-family: var(--font);
+  display: flex; align-items: center; justify-content: center; gap: 5px;
+  transition: all .1s;
+  letter-spacing: -.1px;
+}
+.dact:hover { background: var(--ink-7); }
+.dact.send { background: var(--blue); color: white; border-color: var(--blue); }
+.dact.send:hover { background: var(--blue-mid); border-color: var(--blue-mid); }
+.dact.sign-send { background: var(--green); color: white; border-color: var(--green); }
+.dact.sign-send:hover { background: #08735a; border-color: #08735a; }
+.dact:disabled { opacity: .45; cursor: not-allowed; pointer-events: none; }
+
+/* ── PANELS ── */
+.panel { flex: 1; overflow-y: auto; padding: 20px; display: none; flex-direction: column; gap: 16px; background: var(--ink-7); }
+.panel.vis { display: flex; }
+.panel-title { font-size: 16px; font-weight: 600; letter-spacing: -.3px; }
+.panel-sub { font-size: 13px; color: var(--ink-3); line-height: 1.6; margin-top: -8px; }
+
+/* PDF PANEL */
+.upload-zone {
+  border: 1.5px dashed var(--ink-5);
+  border-radius: var(--r-lg);
+  padding: 24px;
+  text-align: center;
+  cursor: pointer;
+  background: var(--white);
+  transition: all .15s;
+}
+.upload-zone:hover { border-color: var(--blue); background: var(--blue-soft); }
+.uz-icon { font-size: 26px; margin-bottom: 8px; display: block; color: var(--ink-4); }
+.uz-title { font-size: 13px; font-weight: 500; color: var(--ink-2); margin-bottom: 3px; }
+.uz-hint { font-size: 11px; color: var(--ink-4); }
+.sig-box { background: var(--white); border: 1px solid var(--ink-6); border-radius: var(--r-lg); padding: 16px; text-align: center; }
+.sig-box-lbl { font-size: 11px; color: var(--ink-4); margin-bottom: 8px; }
+.sig-box img { max-height: 64px; }
+.pdf-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 11px 14px;
+  background: var(--white);
+  border: 1px solid var(--ink-6);
+  border-radius: var(--r);
+}
+.pdf-item .pdf-ic { font-size: 20px; color: var(--red); flex-shrink: 0; }
+.pdf-name { flex: 1; font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pdf-badge { font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 20px; }
+.pdf-badge.signed { background: var(--green-soft); color: var(--green); }
+.pdf-badge.pending { background: var(--amber-soft); color: var(--amber); }
+.pdf-sign-btn {
+  padding: 5px 11px;
+  border: 1px solid var(--blue);
+  border-radius: var(--r);
+  color: var(--blue);
+  font-size: 11px; font-weight: 500;
+  cursor: pointer;
+  background: transparent;
+  font-family: var(--font);
+  transition: background .1s;
+}
+.pdf-sign-btn:hover { background: var(--blue-soft); }
+
+/* GUIDELINES */
+.gl-card { background: var(--white); border: 1px solid var(--ink-6); border-radius: var(--r-lg); padding: 13px 14px; }
+.gl-top { display: flex; align-items: center; gap: 9px; margin-bottom: 5px; }
+.gl-ic { font-size: 16px; }
+.gl-name { font-size: 13px; font-weight: 600; flex: 1; letter-spacing: -.1px; }
+.gl-del {
+  background: none; border: none; cursor: pointer;
+  color: var(--ink-4); font-size: 14px;
+  padding: 3px 5px; border-radius: 5px;
+  transition: all .1s;
+}
+.gl-del:hover { color: var(--red); background: var(--red-soft); }
+.gl-desc { font-size: 12px; color: var(--ink-3); line-height: 1.6; margin-bottom: 7px; }
+.gl-trigger { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 5px; background: var(--ink-7); color: var(--ink-2); letter-spacing: .03em; }
+
+.gl-form { background: var(--white); border: 1px solid var(--ink-5); border-radius: var(--r-lg); padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.gl-form label { font-size: 11px; font-weight: 600; color: var(--ink-3); }
+.gl-form input, .gl-form textarea {
+  width: 100%;
+  padding: 8px 11px;
+  border: 1px solid var(--ink-5);
+  border-radius: var(--r);
+  font-family: var(--font);
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--white);
+  outline: none;
+  transition: border-color .12s;
+}
+.gl-form input:focus, .gl-form textarea:focus { border-color: var(--blue); }
+.gl-form textarea { resize: vertical; min-height: 68px; line-height: 1.5; }
+.form-btns { display: flex; gap: 7px; }
+.save-btn {
+  padding: 8px 16px;
+  border-radius: var(--r);
+  background: var(--blue);
+  color: white; font-family: var(--font);
+  font-size: 12px; font-weight: 500;
+  border: none; cursor: pointer;
+  transition: background .1s;
+  letter-spacing: -.1px;
+}
+.save-btn:hover { background: var(--blue-mid); }
+.cancel-btn {
+  padding: 8px 16px;
+  border-radius: var(--r);
+  background: var(--white);
+  color: var(--ink-2);
+  font-family: var(--font);
+  font-size: 12px;
+  border: 1px solid var(--ink-5);
+  cursor: pointer;
+  transition: background .1s;
+}
+.cancel-btn:hover { background: var(--ink-7); }
+.add-gl-btn {
+  display: flex; align-items: center; gap: 7px;
+  padding: 9px 14px;
+  background: var(--white);
+  border: 1.5px dashed var(--ink-5);
+  border-radius: var(--r);
+  font-size: 13px; color: var(--ink-3);
+  cursor: pointer;
+  font-family: var(--font);
+  width: fit-content;
+  transition: all .12s;
+}
+.add-gl-btn:hover { border-color: var(--blue); color: var(--blue); background: var(--blue-soft); }
+
+/* ── TOAST ── */
+#toast {
+  position: fixed; bottom: 22px; right: 22px;
+  background: var(--ink);
+  color: white;
+  font-size: 13px; font-weight: 400;
+  padding: 10px 18px;
+  border-radius: var(--r-lg);
+  z-index: 999;
+  display: none;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+  letter-spacing: -.1px;
+  animation: slideup .22s cubic-bezier(.16,1,.3,1);
+}
+#toast.show { display: block; }
+@keyframes slideup { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+
+.err-inline {
+  background: var(--red-soft);
+  border: 1px solid var(--red-border);
+  border-radius: var(--r);
+  padding: 10px 14px;
+  font-size: 12px; color: var(--red);
+  margin: 12px;
+}
 </style>
 </head>
 <body>
 
-<!-- PASSWORD GATE -->
+<!-- GATE -->
 <div id="gate-screen">
   <div class="gate-card">
-    <div class="gate-logo">🔐</div>
-    <div class="gate-title">Private Access</div>
-    <div class="gate-sub">Enter your access password to continue</div>
-    <input class="gate-input" type="password" id="gate-pass" placeholder="••••••••" onkeydown="if(event.key==='Enter')checkGate()" />
-    <button class="gate-btn" onclick="checkGate()">Unlock</button>
-    <div class="gate-error" id="gate-error">Incorrect password. Please try again.</div>
-    <div class="gate-attempts" id="gate-attempts"></div>
+    <div class="gate-mark">
+      <svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+    </div>
+    <div class="gate-h">Private access</div>
+    <div class="gate-s">Enter your password to continue</div>
+    <input class="gate-input" id="gate-pass" type="password" placeholder="••••••••" onkeydown="if(event.key==='Enter')checkGate()" />
+    <button class="gate-btn" onclick="checkGate()">Continue</button>
+    <div class="gate-err" id="gate-err">Incorrect password — try again.</div>
   </div>
 </div>
 
 <!-- LOGIN -->
 <div id="login-screen" style="display:none">
   <div class="login-card">
-    <div class="login-logo">
+    <div class="login-mark">
       <svg viewBox="0 0 24 24"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/></svg>
     </div>
-    <div class="login-title">AI Email Agent</div>
-    <div class="login-sub">Connect your Outlook account to let the AI read, categorize, draft replies, and handle PDF signatures automatically.</div>
-    <div class="features-list">
-      <div class="feat"><div class="feat-icon blue">📨</div>Auto-detect emails needing a reply</div>
-      <div class="feat"><div class="feat-icon green">✍️</div>Emails saying "add signature" — sign PDF & send back</div>
-      <div class="feat"><div class="feat-icon amber">⚡</div>Flag urgent emails instantly</div>
-      <div class="feat"><div class="feat-icon purple">📋</div>Editable guidelines — add & remove anytime</div>
+    <div class="login-h">AI Email Agent</div>
+    <div class="login-s">Connect your Outlook account to let the AI read, categorize, draft replies, and handle PDF signatures automatically.</div>
+    <div class="features">
+      <div class="feat"><div class="feat-dot b">📨</div>Auto-detect emails needing a reply</div>
+      <div class="feat"><div class="feat-dot g">✍️</div>Sign PDF attachments and send back</div>
+      <div class="feat"><div class="feat-dot a">⚡</div>Flag and surface urgent emails instantly</div>
+      <div class="feat"><div class="feat-dot p">📋</div>Editable agent guidelines, always in sync</div>
     </div>
-    <button class="login-btn" onclick="signIn()">
+    <button class="ms-btn" onclick="signIn()">
       <svg viewBox="0 0 23 23" xmlns="http://www.w3.org/2000/svg"><path fill="#f3f3f3" d="M0 0h23v23H0z"/><path fill="#f35325" d="M1 1h10v10H1z"/><path fill="#81bc06" d="M12 1h10v10H12z"/><path fill="#05a6f0" d="M1 12h10v10H1z"/><path fill="#ffba08" d="M12 12h10v10H12z"/></svg>
       Sign in with Microsoft
     </button>
     <div class="login-note">Your emails are never stored. All processing happens in your browser.</div>
-    <div id="login-error" class="error-msg" style="display:none;margin-top:12px"></div>
+    <div id="login-error" class="err-box"></div>
   </div>
 </div>
 
 <!-- APP -->
 <div id="app">
   <div class="topbar">
-    <div class="topbar-left">
-      <div class="topbar-logo"><svg viewBox="0 0 24 24" fill="white"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/></svg></div>
-      <div class="topbar-title">AI Email Agent</div>
-    </div>
-    <div class="topbar-right">
-      <div class="user-pill"><div class="user-dot"></div><span id="user-email-display">Connected</span></div>
-      <button class="signout-btn" onclick="signOut()">Sign out</button>
-    </div>
+    <div class="tb-logo"><svg viewBox="0 0 24 24"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/></svg></div>
+    <div class="tb-title">AI Email Agent</div>
+    <div class="tb-space"></div>
+    <div class="tb-status"><div class="tb-dot"></div><span id="user-email-display">Connected</span></div>
+    <button class="tb-signout" onclick="signOut()">Sign out</button>
   </div>
 
   <div class="layout">
     <div class="sidebar">
-      <div class="nav-section">Inbox</div>
-      <div class="nav-item active" onclick="setNav(this,'all')"><span class="icon">📥</span> All Emails <span class="nbadge" id="nb-all">0</span></div>
-      <div class="nav-item" onclick="setNav(this,'urgent')"><span class="icon">⚡</span> Urgent <span class="nbadge red" id="nb-urgent">0</span></div>
-      <div class="nav-item" onclick="setNav(this,'reply')"><span class="icon">↩️</span> Need Reply <span class="nbadge" id="nb-reply">0</span></div>
-      <div class="nav-item" onclick="setNav(this,'sign')"><span class="icon">✍️</span> Need Signature <span class="nbadge" id="nb-sign">0</span></div>
-      <div class="nav-item" onclick="setNav(this,'unread')"><span class="icon">🔵</span> Unread</div>
-      <div class="nav-section">Categories</div>
-      <div class="nav-item" onclick="setNav(this,'client')"><span class="icon">🤝</span> Clients</div>
-      <div class="nav-item" onclick="setNav(this,'supplier')"><span class="icon">🚚</span> Suppliers</div>
-      <div class="nav-item" onclick="setNav(this,'hr')"><span class="icon">👥</span> HR</div>
-      <div class="nav-item" onclick="setNav(this,'invoice')"><span class="icon">🧾</span> Invoices</div>
-      <div class="nav-section">Tools</div>
-      <div class="nav-item" onclick="setNav(this,'pdf')"><span class="icon">📄</span> PDF Signing</div>
-      <div class="nav-item" onclick="setNav(this,'guidelines')"><span class="icon">📋</span> Guidelines <span class="nbadge gray" id="nb-gl">0</span></div>
+      <div class="nav-group">Inbox</div>
+      <div class="nav-item active" onclick="setNav(this,'all')"><span class="nav-ic">📥</span>All emails<span class="nbadge" id="nb-all">0</span></div>
+      <div class="nav-item" onclick="setNav(this,'urgent')"><span class="nav-ic">⚡</span>Urgent<span class="nbadge red" id="nb-urgent">0</span></div>
+      <div class="nav-item" onclick="setNav(this,'reply')"><span class="nav-ic">↩️</span>Need reply<span class="nbadge" id="nb-reply">0</span></div>
+      <div class="nav-item" onclick="setNav(this,'sign')"><span class="nav-ic">✍️</span>Need signature<span class="nbadge" id="nb-sign">0</span></div>
+      <div class="nav-item" onclick="setNav(this,'unread')"><span class="nav-ic">🔵</span>Unread</div>
+      <div class="nav-group">Categories</div>
+      <div class="nav-item" onclick="setNav(this,'client')"><span class="nav-ic">🤝</span>Clients</div>
+      <div class="nav-item" onclick="setNav(this,'supplier')"><span class="nav-ic">🚚</span>Suppliers</div>
+      <div class="nav-item" onclick="setNav(this,'hr')"><span class="nav-ic">👥</span>HR</div>
+      <div class="nav-item" onclick="setNav(this,'invoice')"><span class="nav-ic">🧾</span>Invoices</div>
+      <div class="nav-group">Tools</div>
+      <div class="nav-item" onclick="setNav(this,'pdf')"><span class="nav-ic">📄</span>PDF signing</div>
+      <div class="nav-item" onclick="setNav(this,'guidelines')"><span class="nav-ic">📋</span>Guidelines<span class="nbadge dim" id="nb-gl">0</span></div>
     </div>
 
     <div class="main">
       <div class="toolbar">
-        <button class="tbtn primary" onclick="loadEmails()"><span class="icon">🔄</span> Refresh Inbox</button>
-        <button class="tbtn" onclick="runAgent()"><span class="icon">🤖</span> Run Agent</button>
-        <div class="sp"></div>
-        <div class="search-wrap"><span style="font-size:13px;color:var(--text-hint)">🔍</span><input type="text" placeholder="Search emails..." oninput="filterEmails(this.value)" /></div>
+        <button class="tbtn blue" onclick="loadEmails()"><span class="ic">🔄</span>Refresh inbox</button>
+        <button class="tbtn" onclick="runAgent()"><span class="ic">🤖</span>Run agent</button>
+        <div class="tb-sp"></div>
+        <div class="search-box">
+          <span class="s-ic">🔍</span>
+          <input type="text" placeholder="Search emails…" oninput="filterEmails(this.value)" />
+        </div>
       </div>
 
-      <!-- INBOX VIEW -->
+      <!-- INBOX -->
       <div class="inbox-layout" id="inbox-view">
         <div class="email-list" id="email-list">
-          <div class="loading"><div class="spinner"></div> Loading your inbox...</div>
+          <div class="loading-row"><div class="spin"></div>Loading your inbox…</div>
         </div>
         <div class="detail" id="detail-panel">
-          <div class="empty-state"><div class="big-icon">📭</div><p>Select an email to view</p></div>
+          <div class="detail-empty"><div class="d-icon">📭</div><p>Select an email to view</p></div>
         </div>
       </div>
 
       <!-- PDF PANEL -->
       <div class="panel" id="pdf-panel">
-        <div class="panel-title">PDF Signing</div>
-        <div class="panel-sub">Upload your signature image once. When the agent detects an email saying "add signature", it places your signature on the attached PDF and sends it back automatically.</div>
+        <div class="panel-title">PDF signing</div>
+        <div class="panel-sub">Upload your signature image once. When the agent detects a "sign and return" email it places your signature on the attached PDF automatically.</div>
         <div class="upload-zone" onclick="document.getElementById('sig-input').click()">
-          <span class="big-icon">✍️</span>
-          <p>Upload your signature image</p>
-          <span>PNG with transparent background recommended</span>
+          <span class="uz-icon">✍️</span>
+          <div class="uz-title">Upload signature image</div>
+          <div class="uz-hint">PNG with transparent background recommended</div>
           <input type="file" id="sig-input" accept="image/*" style="display:none" onchange="loadSignature(this)" />
         </div>
-        <div id="sig-preview-box" style="display:none" class="sig-preview">
-          <p>Your signature (ready to use)</p>
-          <img id="sig-img" alt="Your signature" />
+        <div id="sig-preview-box" style="display:none" class="sig-box">
+          <div class="sig-box-lbl">Your signature — ready to use</div>
+          <img id="sig-img" alt="Signature preview" />
         </div>
-        <div style="font-size:12px;font-weight:600;color:var(--text-muted)">Documents queue</div>
+        <div style="font-size:12px;font-weight:600;color:var(--ink-3)">Documents queue</div>
         <div id="pdf-list"></div>
         <div class="upload-zone" onclick="document.getElementById('pdf-input').click()">
-          <span class="big-icon">📎</span>
-          <p>Upload a PDF to sign manually</p>
-          <span>Or the agent will handle PDFs from emails automatically</span>
+          <span class="uz-icon">📎</span>
+          <div class="uz-title">Upload a PDF to sign manually</div>
+          <div class="uz-hint">Or the agent will handle PDFs from emails automatically</div>
           <input type="file" id="pdf-input" accept=".pdf" style="display:none" onchange="addManualPdf(this)" />
         </div>
       </div>
 
       <!-- GUIDELINES PANEL -->
       <div class="panel" id="guidelines-panel">
-        <div class="panel-title">My Agent Guidelines</div>
-        <div class="panel-sub">These are the rules the AI follows when processing your emails. Add, edit, or remove them anytime — changes take effect immediately.</div>
+        <div class="panel-title">Agent guidelines</div>
+        <div class="panel-sub">Rules the AI follows when processing your emails. Changes take effect immediately.</div>
         <div id="gl-list"></div>
-        <div class="add-gl-form" id="gl-form" style="display:none">
-          <label>Trigger — keyword or condition in the email</label>
-          <input type="text" id="gl-trigger-input" placeholder='e.g. "invoice overdue", "from supplier", "urgent"' />
+        <div class="gl-form" id="gl-form" style="display:none">
+          <label>Trigger — keyword or condition</label>
+          <input type="text" id="gl-trigger" placeholder='e.g. "invoice overdue", "from supplier"' />
           <label>Rule title</label>
-          <input type="text" id="gl-title-input" placeholder="Short name for this rule" />
+          <input type="text" id="gl-title" placeholder="Short name for this rule" />
           <label>What the agent should do</label>
-          <textarea id="gl-desc-input" placeholder="e.g. Draft a polite reply acknowledging the invoice and confirm payment will be made within 3 business days."></textarea>
-          <div class="form-row">
+          <textarea id="gl-desc" placeholder="e.g. Draft a polite reply acknowledging the invoice and confirm payment within 3 business days."></textarea>
+          <div class="form-btns">
             <button class="save-btn" onclick="saveGuideline()">Save guideline</button>
             <button class="cancel-btn" onclick="cancelGuideline()">Cancel</button>
           </div>
@@ -343,47 +753,37 @@
   </div>
 </div>
 
-<div class="toast" id="toast"></div>
+<div id="toast" class="toast"></div>
 
 <script>
-// ============================================================
-// PASSWORD GATE — change the password below to your own
-// ============================================================
-const ACCESS_PASSWORD = 'EmailAgent2024!'; // <-- CHANGE THIS to your own password
+// ── CONFIG ──────────────────────────────────────────────
+const ACCESS_PASSWORD = 'EmailAgent2024!';
 let gateAttempts = 0;
 
 function checkGate() {
-  const entered = document.getElementById('gate-pass').value;
-  const errEl = document.getElementById('gate-error');
-  const attEl = document.getElementById('gate-attempts');
-  if(entered === ACCESS_PASSWORD) {
+  const v = document.getElementById('gate-pass').value;
+  const err = document.getElementById('gate-err');
+  if (v === ACCESS_PASSWORD) {
     document.getElementById('gate-screen').style.display = 'none';
     document.getElementById('login-screen').style.display = 'flex';
-    sessionStorage.setItem('gate_ok', '1');
+    sessionStorage.setItem('gate_ok','1');
   } else {
     gateAttempts++;
-    errEl.style.display = 'block';
+    err.style.display = 'block';
     document.getElementById('gate-pass').value = '';
-    if(gateAttempts >= 3) {
-      attEl.textContent = gateAttempts + ' failed attempts. Try again carefully.';
-    }
-    if(gateAttempts >= 5) {
+    if (gateAttempts >= 5) {
       document.getElementById('gate-pass').disabled = true;
       document.querySelector('.gate-btn').disabled = true;
-      errEl.textContent = 'Too many attempts. Please refresh the page.';
+      err.textContent = 'Too many attempts. Refresh the page to try again.';
     }
   }
 }
-
-// Check if already passed gate this session
-if(sessionStorage.getItem('gate_ok') === '1') {
+if (sessionStorage.getItem('gate_ok') === '1') {
   document.getElementById('gate-screen').style.display = 'none';
   document.getElementById('login-screen').style.display = 'flex';
 }
 
-// ============================================================
-// MSAL CONFIG — Microsoft OAuth for personal Outlook accounts
-// ============================================================
+// ── MSAL ────────────────────────────────────────────────
 const msalConfig = {
   auth: {
     clientId: 'c0e271ab-48fd-4c53-bc89-45b666bf3bc2',
@@ -394,27 +794,24 @@ const msalConfig = {
   cache: { cacheLocation: 'sessionStorage', storeAuthStateInCookie: true },
   system: { allowNativeBroker: false }
 };
-
-const scopes = ['openid', 'profile', 'User.Read', 'Mail.Read', 'Mail.Send', 'Mail.ReadWrite'];
+const scopes = ['openid','profile','User.Read','Mail.Read','Mail.Send','Mail.ReadWrite'];
 let msalInstance, accessToken, allEmails = [], sigData = null, pdfs = [], curNav = 'all', selId = null;
 
 let guidelines = [
-  { id:1, trigger:'please reply / reply', title:'Draft & send reply', desc:'Draft a professional English reply, acknowledge the sender\'s point, offer clear next steps, and send it.', icon:'↩️' },
-  { id:2, trigger:'add signature / sign and return', title:'Sign PDF & send back', desc:'Find the attached PDF, place the signature at the bottom-right of the last page, and email the signed document back to the sender.', icon:'✍️' },
-  { id:3, trigger:'URGENT / urgent / overdue', title:'Flag as urgent', desc:'Mark as urgent, prioritize in the inbox, and draft an immediate acknowledgment reply.', icon:'⚡' },
-  { id:4, trigger:'invoice / payment due', title:'Invoice handling', desc:'Acknowledge receipt, confirm review timeline of 2 business days. Escalate if overdue.', icon:'🧾' },
-  { id:5, trigger:'from HR / HR Department', title:'HR — no reply needed', desc:'File the email under HR. Do not draft a reply unless explicitly requested.', icon:'👥' },
+  { id:1, trigger:'please reply / reply', title:'Draft & send reply', desc:"Draft a professional reply, acknowledge the sender's point, offer next steps, and send.", icon:'↩️' },
+  { id:2, trigger:'add signature / sign and return', title:'Sign PDF & send back', desc:'Find the attached PDF, place signature at bottom-right of last page, email the signed document back.', icon:'✍️' },
+  { id:3, trigger:'URGENT / urgent / overdue', title:'Flag as urgent', desc:'Mark as urgent, prioritize in inbox, draft an immediate acknowledgment reply.', icon:'⚡' },
+  { id:4, trigger:'invoice / payment due', title:'Invoice handling', desc:'Acknowledge receipt, confirm 2-business-day review timeline. Escalate if overdue.', icon:'🧾' },
+  { id:5, trigger:'from HR / HR Department', title:'HR — no reply needed', desc:'File under HR. Do not draft a reply unless explicitly requested.', icon:'👥' },
 ];
 let glNextId = 6;
 
-// ============================================================
-// AUTH
-// ============================================================
+// ── AUTH ────────────────────────────────────────────────
 async function signIn() {
   try {
-    const MsalLib = window.msal || window.msalBrowser;
-    if(!MsalLib) { throw new Error('Microsoft login library failed to load. Please refresh the page.'); }
-    msalInstance = new MsalLib.PublicClientApplication(msalConfig);
+    const Lib = window.msal || window.msalBrowser;
+    if (!Lib) throw new Error('Microsoft login library failed to load. Refresh and try again.');
+    msalInstance = new Lib.PublicClientApplication(msalConfig);
     await msalInstance.initialize();
     await msalInstance.handleRedirectPromise();
     const result = await msalInstance.loginPopup({ scopes, prompt: 'select_account' });
@@ -422,44 +819,38 @@ async function signIn() {
     document.getElementById('user-email-display').textContent = result.account.username;
     document.getElementById('login-screen').style.display = 'none';
     document.getElementById('app').style.display = 'flex';
-    renderGuidelines();
-    renderPdfs();
-    loadEmails();
+    renderGuidelines(); renderPdfs(); loadEmails();
   } catch(e) {
-    const errEl = document.getElementById('login-error');
-    errEl.style.display = 'block';
-    errEl.textContent = 'Sign in failed: ' + (e.message || 'Please try again.');
+    const el = document.getElementById('login-error');
+    el.style.display = 'block';
+    el.textContent = 'Sign-in failed: ' + (e.message || 'Please try again.');
   }
 }
 
 function signOut() {
-  if(confirm('Sign out?')) { sessionStorage.clear(); location.reload(); }
+  if (confirm('Sign out?')) { sessionStorage.clear(); location.reload(); }
 }
 
 async function getToken() {
-  if(!msalInstance) return null;
+  if (!msalInstance) return null;
   try {
-    const accounts = msalInstance.getAllAccounts();
-    if(!accounts.length) return null;
-    const result = await msalInstance.acquireTokenSilent({ scopes, account: accounts[0] });
-    return result.accessToken;
+    const accs = msalInstance.getAllAccounts();
+    if (!accs.length) return null;
+    const r = await msalInstance.acquireTokenSilent({ scopes, account: accs[0] });
+    return r.accessToken;
   } catch(e) {
-    try {
-      const result = await msalInstance.acquireTokenPopup({ scopes });
-      return result.accessToken;
-    } catch(e2) { return null; }
+    try { const r = await msalInstance.acquireTokenPopup({ scopes }); return r.accessToken; }
+    catch(e2) { return null; }
   }
 }
 
-// ============================================================
-// GRAPH API
-// ============================================================
+// ── GRAPH API ────────────────────────────────────────────
 async function graphGet(url) {
   const token = await getToken();
   const res = await fetch('https://graph.microsoft.com/v1.0' + url, {
     headers: { Authorization: 'Bearer ' + token }
   });
-  if(!res.ok) throw new Error(await res.text());
+  if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
 
@@ -470,64 +861,62 @@ async function graphPost(url, body) {
     headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
   });
-  if(!res.ok) throw new Error(await res.text());
+  if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
 
-// ============================================================
-// LOAD EMAILS
-// ============================================================
+// ── LOAD EMAILS ──────────────────────────────────────────
 async function loadEmails() {
-  document.getElementById('email-list').innerHTML = '<div class="loading"><div class="spinner"></div> Loading inbox...</div>';
-  document.getElementById('detail-panel').innerHTML = '<div class="empty-state"><div class="big-icon">📭</div><p>Select an email to view</p></div>';
+  document.getElementById('email-list').innerHTML = '<div class="loading-row"><div class="spin"></div>Loading inbox…</div>';
+  document.getElementById('detail-panel').innerHTML = '<div class="detail-empty"><div class="d-icon">📭</div><p>Select an email to view</p></div>';
   selId = null;
   try {
-    const data = await graphGet('/me/mailFolders/inbox/messages?$top=30&$orderby=receivedDateTime desc&$select=id,subject,from,receivedDateTime,isRead,bodyPreview,body,hasAttachments');
+    const data = await graphGet('/me/mailFolders/inbox/messages?$top=30&$orderby=receivedDateTime desc&$select=id,subject,from,toRecipients,receivedDateTime,isRead,bodyPreview,body,hasAttachments');
     allEmails = data.value.map(m => {
       const subj = m.subject || '(no subject)';
       const body = m.body?.content || '';
       const plain = body.replace(/<[^>]+>/g, ' ').replace(/\s+/g,' ').trim();
       const action = detectAction(subj, plain);
       const tags = detectTags(subj, plain, action);
+      // Capture all original To: recipients so we can find who the email was sent to
+      const toRecipients = (m.toRecipients || []).map(r => ({
+        name:    r.emailAddress?.name    || '',
+        address: r.emailAddress?.address || ''
+      }));
       return {
-        id: m.id,
-        from: m.from?.emailAddress?.name || m.from?.emailAddress?.address || 'Unknown',
-        email: m.from?.emailAddress?.address || '',
-        subject: subj,
-        preview: m.bodyPreview || '',
-        body: plain,
-        time: formatTime(m.receivedDateTime),
-        unread: !m.isRead,
-        hasAttachments: m.hasAttachments,
-        action, tags,
-        avatar: getInitials(m.from?.emailAddress?.name || '?'),
+        id: m.id, from: m.from?.emailAddress?.name || m.from?.emailAddress?.address || 'Unknown',
+        email: m.from?.emailAddress?.address || '', subject: subj,
+        preview: m.bodyPreview || '', body: plain, time: formatTime(m.receivedDateTime),
+        unread: !m.isRead, hasAttachments: m.hasAttachments,
+        toRecipients,
+        action, tags, avatar: getInitials(m.from?.emailAddress?.name || '?'),
         color: getAvatarColor(m.from?.emailAddress?.address || '')
       };
     });
     updateBadges();
     renderEmailList(filterByNav(curNav));
   } catch(e) {
-    document.getElementById('email-list').innerHTML = '<div class="error-msg" style="margin:12px">Failed to load emails: ' + e.message + '</div>';
+    document.getElementById('email-list').innerHTML = `<div class="err-inline">Failed to load emails: ${e.message}</div>`;
   }
 }
 
 function detectAction(subject, body) {
-  const text = (subject + ' ' + body).toLowerCase();
-  if (text.includes('add signature') || text.includes('sign and return') || text.includes('please sign') || text.includes('add your signature')) return 'sign';
-  if (text.includes('please reply') || text.includes('reply with') || text.includes('kindly reply') || text.includes('respond to') || text.includes('let us know') || text.includes('your availability')) return 'reply';
+  const t = (subject + ' ' + body).toLowerCase();
+  if (t.includes('add signature')||t.includes('sign and return')||t.includes('please sign')||t.includes('add your signature')) return 'sign';
+  if (t.includes('please reply')||t.includes('reply with')||t.includes('kindly reply')||t.includes('respond to')||t.includes('let us know')||t.includes('your availability')) return 'reply';
   return 'none';
 }
 
 function detectTags(subject, body, action) {
-  const text = (subject + ' ' + body).toLowerCase();
+  const t = (subject + ' ' + body).toLowerCase();
   const tags = [];
   if (action === 'reply') tags.push('reply');
   if (action === 'sign') tags.push('sign');
-  if (text.includes('urgent') || text.includes('overdue') || text.includes('asap') || text.includes('immediately')) tags.push('urgent');
-  if (text.includes('invoice') || text.includes('payment') || text.includes('billing') || text.includes('receipt')) tags.push('invoice');
-  if (text.includes('hr ') || text.includes('human resources') || text.includes('leave') || text.includes('policy')) tags.push('hr');
-  if (text.includes('supplier') || text.includes('vendor') || text.includes('delivery') || text.includes('shipment') || text.includes('purchase order')) tags.push('supplier');
-  if (text.includes('client') || text.includes('customer') || text.includes('contract') || text.includes('proposal') || text.includes('partnership')) tags.push('client');
+  if (t.includes('urgent')||t.includes('overdue')||t.includes('asap')||t.includes('immediately')) tags.push('urgent');
+  if (t.includes('invoice')||t.includes('payment')||t.includes('billing')||t.includes('receipt')) tags.push('invoice');
+  if (t.includes('hr ')||t.includes('human resources')||t.includes('leave')||t.includes('policy')) tags.push('hr');
+  if (t.includes('supplier')||t.includes('vendor')||t.includes('delivery')||t.includes('shipment')||t.includes('purchase order')) tags.push('supplier');
+  if (t.includes('client')||t.includes('customer')||t.includes('contract')||t.includes('proposal')||t.includes('partnership')) tags.push('client');
   return tags;
 }
 
@@ -549,17 +938,20 @@ function updateBadges() {
 }
 
 function renderEmailList(list) {
-  if(!list.length) {
-    document.getElementById('email-list').innerHTML = '<div class="loading">No emails found.</div>';
+  if (!list.length) {
+    document.getElementById('email-list').innerHTML = '<div class="list-empty"><div class="big">📭</div><p>No emails here</p></div>';
     return;
   }
   document.getElementById('email-list').innerHTML = list.map(e => `
-    <div class="eitem ${e.unread?'unread':''} ${selId===e.id?'sel':''}" onclick="selectEmail('${e.id}')">
-      <div class="${e.unread?'udot':'rdot'}"></div>
+    <div class="eitem${e.unread?' unread':''}${selId===e.id?' sel':''}" onclick="selectEmail('${e.id}')">
+      ${e.unread ? '<div class="unread-bar"></div>' : ''}
       <div class="avatar" style="background:${e.color.bg};color:${e.color.text}">${e.avatar}</div>
-      <div class="econtent">
-        <div class="eheader"><span class="esender">${esc(e.from)}</span><span class="etime">${e.time}</span></div>
-        <div class="esubject">${esc(e.subject)}</div>
+      <div class="ecol">
+        <div class="erow1">
+          <span class="ename">${esc(e.from)}</span>
+          <span class="etime">${e.time}</span>
+        </div>
+        <div class="esubj">${esc(e.subject)}</div>
         <div class="eprev">${esc(e.preview.substring(0,80))}</div>
         <div class="etags">${e.tags.map(t=>`<span class="tag tag-${t}">${t}</span>`).join('')}</div>
       </div>
@@ -567,24 +959,21 @@ function renderEmailList(list) {
 }
 
 function filterEmails(q) {
+  const lower = q.toLowerCase();
   const filtered = allEmails.filter(e =>
-    e.from.toLowerCase().includes(q.toLowerCase()) ||
-    e.subject.toLowerCase().includes(q.toLowerCase()) ||
-    e.preview.toLowerCase().includes(q.toLowerCase())
+    e.from.toLowerCase().includes(lower) ||
+    e.subject.toLowerCase().includes(lower) ||
+    e.preview.toLowerCase().includes(lower)
   );
   renderEmailList(filtered);
 }
 
-// ============================================================
-// SELECT EMAIL & SHOW DETAIL
-// ============================================================
+// ── SELECT EMAIL ──────────────────────────────────────────
 async function selectEmail(id) {
   selId = id;
   const e = allEmails.find(x => x.id === id);
-  if(!e) return;
-
-  // Mark as read
-  if(e.unread) {
+  if (!e) return;
+  if (e.unread) {
     try {
       const token = await getToken();
       await fetch(`https://graph.microsoft.com/v1.0/me/messages/${id}`, {
@@ -595,230 +984,348 @@ async function selectEmail(id) {
       e.unread = false;
     } catch(_) {}
   }
-
   renderEmailList(filterByNav(curNav));
   const draft = buildDraft(e);
-
   let aiBlock = '';
-  if(e.action === 'reply') {
+  if (e.action === 'reply') {
     aiBlock = `
-      <div class="ai-area">
-        <div class="ai-label"><span class="icon">🤖</span> Agent action detected</div>
-        <div class="action-pill reply">↩️ Draft & send reply</div>
-        <div class="draft-box" id="draft-content" contenteditable="true">${esc(draft)}</div>
-        <div class="dactions">
+      <div class="ai-panel">
+        <div class="ai-header"><div class="ai-header-dot"></div>Agent action detected</div>
+        <div class="action-chip reply">↩️ Draft &amp; send reply</div>
+        <div class="draft-area" id="draft-content" contenteditable="true">${esc(draft)}</div>
+        <div class="d-actions">
           <button class="dact" onclick="regenerateDraft()">🔄 Regenerate</button>
           <button class="dact send" onclick="sendReply()">📤 Send reply</button>
         </div>
       </div>`;
-  } else if(e.action === 'sign') {
-    const sigReady = !!sigData;
+  } else if (e.action === 'sign') {
+    const ready = !!sigData;
     aiBlock = `
-      <div class="ai-area">
-        <div class="ai-label"><span class="icon">🤖</span> Agent action detected</div>
-        <div class="action-pill sign">✍️ Sign PDF & send back</div>
-        <div class="sign-notice">
-          <span class="icon">📄</span>
+      <div class="ai-panel">
+        <div class="ai-header"><div class="ai-header-dot"></div>Agent action detected</div>
+        <div class="action-chip sign">✍️ Sign PDF &amp; send back</div>
+        <div class="sign-card">
+          <span class="sc-icon">📄</span>
           <div>
-            <div style="font-weight:600;margin-bottom:2px">PDF signature required</div>
-            <div style="font-size:11px">${sigReady ? '✅ Signature loaded — ready to sign and send.' : '⚠️ Upload your signature in the PDF Signing tab first.'}</div>
+            <div class="sign-card-title">PDF signature required</div>
+            <div class="sign-card-sub">${ready ? '✅ Signature loaded — ready to sign and send.' : '⚠️ Upload your signature in the PDF Signing tab first.'}</div>
           </div>
         </div>
-        <div class="dactions">
-          <button class="dact" onclick="setNav(document.querySelector('.nav-item:nth-child(14)'),'pdf')">📁 Upload signature</button>
-          <button class="dact sign-send" onclick="signAndSend()" ${sigReady?'':'disabled'}>✍️ Sign & send</button>
+        <div class="d-actions">
+          <button class="dact" onclick="setNav(document.querySelectorAll('.nav-item')[10],'pdf')">📁 Upload signature</button>
+          <button class="dact sign-send" onclick="signAndSend()" ${ready?'':'disabled'}>✍️ Sign &amp; send</button>
         </div>
       </div>`;
   } else {
-    aiBlock = `<div class="ai-area"><div class="action-pill none">ℹ️ No action required for this email</div></div>`;
+    aiBlock = `<div class="ai-panel"><div class="action-chip none">ℹ️ No action required</div></div>`;
   }
 
   document.getElementById('detail-panel').innerHTML = `
-    <div class="dheader">
-      <div class="dsubject">${esc(e.subject)}</div>
-      <div class="dmeta">
-        <div class="drow"><span class="dlabel">From</span><span class="dval">${esc(e.from)} &lt;${esc(e.email)}&gt;</span></div>
-        <div class="drow"><span class="dlabel">Time</span><span class="dval">${e.time}</span></div>
-        <div class="drow"><span class="dlabel">Tags</span><span class="dval">${e.tags.map(t=>`<span class="tag tag-${t}">${t}</span>`).join(' ')}</span></div>
+    <div class="d-head">
+      <div class="d-subj">${esc(e.subject)}</div>
+      <div class="d-meta">
+        <div class="d-meta-row"><span class="d-lbl">From</span><span class="d-val">${esc(e.from)} &lt;${esc(e.email)}&gt;</span></div>
+        <div class="d-meta-row"><span class="d-lbl">Time</span><span class="d-val">${e.time}</span></div>
+        <div class="d-meta-row"><span class="d-lbl">Tags</span><div class="d-tags">${e.tags.map(t=>`<span class="tag tag-${t}">${t}</span>`).join('')}</div></div>
       </div>
     </div>
-    <div class="dbody">${esc(e.body)}</div>
+    <div class="d-body">${esc(e.body)}</div>
     ${aiBlock}`;
 }
 
 function buildDraft(e) {
   const name = e.from.split(' ')[0];
-  const gl = guidelines.find(g => {
-    const triggers = g.trigger.split('/').map(t=>t.trim().toLowerCase());
-    return triggers.some(t => e.subject.toLowerCase().includes(t) || e.body.toLowerCase().includes(t));
-  });
-  if(e.action !== 'reply') return '';
-  if(e.tags.includes('urgent') && e.tags.includes('invoice'))
+  if (e.action !== 'reply') return '';
+  if (e.tags.includes('urgent') && e.tags.includes('invoice'))
     return `Dear ${name},\n\nThank you for reaching out. I acknowledge the urgency of this matter and have escalated it to our finance team. You will receive a payment status update within 24 hours.\n\nBest regards,`;
-  if(e.tags.includes('supplier'))
+  if (e.tags.includes('supplier'))
     return `Dear ${name},\n\nThank you for your message. I have received your email and will coordinate with the relevant team. I will follow up with a detailed response shortly.\n\nBest regards,`;
-  if(e.tags.includes('client'))
+  if (e.tags.includes('client'))
     return `Dear ${name},\n\nThank you for your email. I would be happy to discuss this further. I am available for a call on Tuesday or Wednesday — please let me know what works best for you.\n\nBest regards,`;
-  if(e.tags.includes('invoice'))
-    return `Dear ${name},\n\nThank you for your message. I have received your request and will review it within 2 business days. I will get back to you with a full response.\n\nBest regards,`;
+  if (e.tags.includes('invoice'))
+    return `Dear ${name},\n\nThank you for your message. I have received your request and will review it within 2 business days.\n\nBest regards,`;
   return `Dear ${name},\n\nThank you for your email. I have reviewed your message and will follow up with the necessary details shortly.\n\nBest regards,`;
 }
 
-// ============================================================
-// SEND REPLY
-// ============================================================
+// ── SEND REPLY ────────────────────────────────────────────
 async function sendReply(id) {
   const targetId = id || selId;
   const e = allEmails.find(x => x.id === targetId);
-  if(!e) { toast('No email selected.'); return; }
+  if (!e) { toast('No email selected.'); return; }
   const draftEl = document.getElementById('draft-content');
   const body = draftEl ? draftEl.innerText : buildDraft(e);
   try {
     await graphPost(`/me/messages/${encodeURIComponent(targetId)}/reply`, {
-      message: {
-        body: { contentType: 'Text', content: body }
-      }
+      message: { body: { contentType: 'Text', content: body } }
     });
     toast('Reply sent to ' + e.from + '!');
     e.action = 'done'; e.tags = e.tags.filter(t=>t!=='reply');
-    updateBadges();
-    renderEmailList(filterByNav(curNav));
-    document.getElementById('detail-panel').innerHTML = '<div class="empty-state"><div class="big-icon">✅</div><p>Reply sent successfully!</p></div>';
+    updateBadges(); renderEmailList(filterByNav(curNav));
+    document.getElementById('detail-panel').innerHTML = '<div class="detail-empty"><div class="d-icon">✅</div><p>Reply sent successfully</p></div>';
     selId = null;
-  } catch(err) {
-    toast('Failed to send: ' + err.message);
-  }
+  } catch(err) { toast('Failed to send: ' + err.message); }
 }
 
 function regenerateDraft(id) {
-  const targetId = id || selId;
-  const e = allEmails.find(x => x.id === targetId);
+  const e = allEmails.find(x => x.id === (id||selId));
   const el = document.getElementById('draft-content');
-  if(el && e) el.innerText = buildDraft(e);
+  if (el && e) el.innerText = buildDraft(e);
 }
 
-// ============================================================
-// SIGN PDF & SEND
-// ============================================================
+// ── SIGN & SEND ───────────────────────────────────────────
+//
+// Signature placement rules:
+//   PO  (subject/body contains "PO")  → above "Alaadin Yacout"
+//   OBD (subject/body contains "OBD") → below "Approved by"
+//   Default                           → bottom-right of last page
+//
+// Reply is a clean new message with ONLY the signed PDF attached
+// (no inherited attachments from the original email thread).
+//
 async function signAndSend(id) {
   const targetId = id || selId;
-  if(!sigData) { toast('Upload your signature first in the PDF Signing tab.'); return; }
+  if (!sigData) { toast('Upload your signature first.'); return; }
   const e = allEmails.find(x => x.id === targetId);
-  if(!e) { toast('No email selected.'); return; }
+  if (!e) { toast('No email selected.'); return; }
 
-  toast('📎 Fetching PDF attachment...');
+  toast('📎 Fetching PDF attachment…');
   try {
     const token = await getToken();
-    const encodedId = encodeURIComponent(targetId);
+    const enc = encodeURIComponent(targetId);
 
-    // Step 1 — list attachments to find the PDF
-    const attachList = await graphGet(`/me/messages/${encodedId}/attachments`);
+    // ── 1. Find the PDF attachment ────────────────────────────
+    const attachList = await graphGet(`/me/messages/${enc}/attachments`);
     const pdfMeta = attachList.value?.find(a => a.name?.toLowerCase().endsWith('.pdf'));
-    if(!pdfMeta) { toast('❌ No PDF attachment found in this email.'); return; }
+    if (!pdfMeta) { toast('❌ No PDF attachment found.'); return; }
+    const fullAttach = await graphGet(`/me/messages/${enc}/attachments/${encodeURIComponent(pdfMeta.id)}`);
+    if (!fullAttach.contentBytes) { toast('❌ Could not download PDF content.'); return; }
 
-    // Step 2 — fetch full attachment content individually (gets contentBytes)
-    const fullAttach = await graphGet(`/me/messages/${encodedId}/attachments/${encodeURIComponent(pdfMeta.id)}`);
-    if(!fullAttach.contentBytes) { toast('❌ Could not download PDF content. Check Mail.Read permission.'); return; }
+    toast('✍️ Signing PDF…');
 
-    toast('✍️ Signing PDF...');
+    // ── 2. Detect document type from subject + body ───────────
+    const context = (e.subject + ' ' + e.body).toUpperCase();
+    const isPO  = context.includes('PO ') || context.includes(' PO') || /\bPO\b/.test(context);
+    const isOBD = context.includes('OBD');
 
-    // Step 3 — sign the PDF with pdf-lib
+    // ── 3. Load PDF and embed signature image ─────────────────
     const pdfBytes = Uint8Array.from(atob(fullAttach.contentBytes), c => c.charCodeAt(0));
-    const pdfDoc = await PDFLib.PDFDocument.load(pdfBytes);
-    const pages = pdfDoc.getPages();
+    const pdfDoc   = await PDFLib.PDFDocument.load(pdfBytes);
+    const pages    = pdfDoc.getPages();
     const lastPage = pages[pages.length - 1];
     const { width, height } = lastPage.getSize();
 
     let sigImage;
-    if(sigData.includes('data:image/png')) {
+    if (sigData.includes('data:image/png')) {
       sigImage = await pdfDoc.embedPng(sigData.split(',')[1]);
     } else {
       sigImage = await pdfDoc.embedJpg(sigData.split(',')[1]);
     }
     const sigDims = sigImage.scale(0.35);
-    lastPage.drawImage(sigImage, {
-      x: width - sigDims.width - 50,
-      y: 50,
-      width: sigDims.width,
-      height: sigDims.height
-    });
-    const signedBytes = await pdfDoc.save();
+    const sigW = sigDims.width;
+    const sigH = sigDims.height;
 
-    // Convert to base64 safely (handles large files)
+    // ── 4. Determine X / Y placement ─────────────────────────
+    //
+    // pdf-lib uses bottom-left origin (y=0 is bottom of page).
+    // We scan the page's text content to locate anchor strings.
+    // If we can't find the anchor we fall back to the default position.
+    //
+    let sigX = width - sigW - 50;   // default: right-aligned
+    let sigY = 50;                   // default: near bottom
+
+    if (isPO || isOBD) {
+      // Extract all text items from the page with their positions
+      const items = getPageTextItems(lastPage);
+
+      if (isPO) {
+        // Anchor: "Alaadin Yacout" — place signature ABOVE the name
+        const anchor = findAnchor(items, 'alaadin yacout');
+        if (anchor) {
+          // Place sig so its bottom sits ~6pt above the anchor text top
+          sigX = anchor.x;
+          sigY = anchor.y + anchor.h + 6;
+        } else {
+          // Fallback: right side, 30% up from bottom
+          sigY = height * 0.30;
+        }
+      } else if (isOBD) {
+        // Anchor: "Approved by" — place signature BELOW the text
+        const anchor = findAnchor(items, 'approved by');
+        if (anchor) {
+          // Place sig so its top sits ~6pt below the anchor text bottom
+          sigY = anchor.y - sigH - 6;
+          sigX = anchor.x;
+        } else {
+          // Fallback: right side, 20% up from bottom
+          sigY = height * 0.20;
+        }
+      }
+
+      // Keep signature within page bounds
+      sigX = Math.max(10, Math.min(sigX, width  - sigW - 10));
+      sigY = Math.max(10, Math.min(sigY, height - sigH - 10));
+    }
+
+    lastPage.drawImage(sigImage, { x: sigX, y: sigY, width: sigW, height: sigH });
+
+    const signedBytes  = await pdfDoc.save();
     const signedBase64 = btoa(Array.from(signedBytes).map(b => String.fromCharCode(b)).join(''));
 
-    toast('📤 Sending signed PDF back...');
+    toast('📤 Sending signed PDF…');
 
-    // Step 4 — create a reply draft then add attachment and send
-    const draftRes = await fetch(`https://graph.microsoft.com/v1.0/me/messages/${encodedId}/createReply`, {
+    // ── 5. Build recipient list & email body ──────────────────
+    //
+    // TO:  the original sender of the email (whoever sent to alaadinyacout@gulfmedical.com)
+    // CC:  alaadinyacout@gulfmedical.com always included
+    //
+    // For PO emails, the greeting uses the name extracted from the To: field
+    // (the person the original email was addressed to, i.e. Alaadin's name or
+    // a colleague's — whichever was in the To header). We look through
+    // toRecipients for the gulfmedical address and use that display name;
+    // otherwise fall back to the sender's first name.
+    //
+    const ALAADIN_EMAIL = 'alaadinyacout@gulfmedical.com';
+
+    // Resolve the greeting name for PO emails from the To: field
+    let greetingName = e.from.split(' ')[0]; // default: sender's first name
+    if (isPO && e.toRecipients && e.toRecipients.length) {
+      // Prefer the gulfmedical recipient's display name; fall back to first To recipient
+      const gulfRec = e.toRecipients.find(r => r.address.toLowerCase() === ALAADIN_EMAIL);
+      const nameSource = gulfRec || e.toRecipients[0];
+      if (nameSource && nameSource.name) greetingName = nameSource.name.split(' ')[0];
+    }
+
+    // Build the email body depending on document type
+    let emailBody;
+    if (isPO) {
+      emailBody = `Dear ${greetingName},\n\nPlease find attached approved order, please make sure to send to supplier ASAP and copy all concerned persons.\n\nBest regards,`;
+    } else {
+      emailBody = `Dear ${e.from.split(' ')[0]},\n\nPlease find the signed document attached as requested.\n\nBest regards,`;
+    }
+
+    // ── 6. Send a CLEAN new message — ONLY the signed PDF attached ─
+    const sendRes = await fetch('https://graph.microsoft.com/v1.0/me/sendMail', {
       method: 'POST',
       headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
-      body: JSON.stringify({})
-    });
-    if(!draftRes.ok) { const err = await draftRes.text(); toast('❌ Failed to create reply: ' + err); return; }
-    const draft = await draftRes.json();
-    const draftId = encodeURIComponent(draft.id);
-
-    // Step 5 — update draft body
-    await fetch(`https://graph.microsoft.com/v1.0/me/messages/${draftId}`, {
-      method: 'PATCH',
-      headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        body: { contentType: 'Text', content: 'Dear ' + e.from.split(' ')[0] + ',\n\nPlease find the signed document attached as requested.\n\nBest regards,' }
+        message: {
+          subject: 'Re: ' + e.subject,
+          body: { contentType: 'Text', content: emailBody },
+          // Reply TO the original sender (the person who emailed alaadin)
+          toRecipients: [{ emailAddress: { address: e.email, name: e.from } }],
+          // Always CC alaadinyacout@gulfmedical.com
+          ccRecipients: [{ emailAddress: { address: ALAADIN_EMAIL, name: 'Alaadin Yacout' } }],
+          attachments: [{
+            '@odata.type': '#microsoft.graph.fileAttachment',
+            name: 'signed_' + fullAttach.name,
+            contentType: 'application/pdf',
+            contentBytes: signedBase64
+          }]
+        },
+        saveToSentItems: true
       })
     });
 
-    // Step 6 — add signed PDF as attachment to draft
-    await fetch(`https://graph.microsoft.com/v1.0/me/messages/${draftId}/attachments`, {
-      method: 'POST',
-      headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        '@odata.type': '#microsoft.graph.fileAttachment',
-        name: 'signed_' + fullAttach.name,
-        contentType: 'application/pdf',
-        contentBytes: signedBase64
-      })
-    });
+    if (!sendRes.ok) {
+      const errText = await sendRes.text();
+      toast('❌ Failed to send: ' + errText);
+      return;
+    }
 
-    // Step 7 — send the draft
-    const sendRes = await fetch(`https://graph.microsoft.com/v1.0/me/messages/${draftId}/send`, {
-      method: 'POST',
-      headers: { Authorization: 'Bearer ' + token }
-    });
-    if(!sendRes.ok) { const err = await sendRes.text(); toast('❌ Failed to send: ' + err); return; }
-
-    toast('✅ Signed PDF sent back to ' + e.from + '!');
-    e.action = 'done'; e.tags = e.tags.filter(t=>t!=='sign');
-    updateBadges();
-    renderEmailList(filterByNav(curNav));
-    document.getElementById('detail-panel').innerHTML = '<div class="empty-state"><div class="big-icon">✅</div><p>Signed PDF sent successfully!</p></div>';
+    toast('✅ Signed PDF sent to ' + e.from + '!');
+    e.action = 'done'; e.tags = e.tags.filter(t => t !== 'sign');
+    updateBadges(); renderEmailList(filterByNav(curNav));
+    document.getElementById('detail-panel').innerHTML = '<div class="detail-empty"><div class="d-icon">✅</div><p>Signed PDF sent successfully</p></div>';
     selId = null;
-  } catch(err) {
-    toast('❌ Error: ' + err.message);
-    console.error(err);
-  }
+
+  } catch(err) { toast('❌ Error: ' + err.message); console.error(err); }
 }
 
-// ============================================================
-// RUN AGENT — auto-process all pending emails
-// ============================================================
+// ── PDF TEXT HELPERS ──────────────────────────────────────
+//
+// pdf-lib doesn't expose a built-in text-extraction API, so we walk
+// the page's content stream operators to collect text items + positions.
+// This is a best-effort extraction sufficient for locating anchor strings.
+//
+function getPageTextItems(page) {
+  const items = [];
+  try {
+    const contentStream = page.node.get(page.node.context.obj('Contents'));
+    if (!contentStream) return items;
+    // Access raw content bytes via pdf-lib internals
+    const rawBytes = contentStream.contents || contentStream.getContents?.() || null;
+    if (!rawBytes) return items;
+    const content = typeof rawBytes === 'string' ? rawBytes : new TextDecoder('latin1').decode(rawBytes);
+    // Parse basic text-positioning operators: Td, TD, Tm, Tj, TJ, BT/ET
+    const lines = content.split('\n');
+    let curX = 0, curY = 0, inText = false, fontSize = 12;
+    for (const line of lines) {
+      const t = line.trim();
+      if (t === 'BT') { inText = true; continue; }
+      if (t === 'ET') { inText = false; continue; }
+      if (!inText) continue;
+      // Tf — font size: /F1 12 Tf
+      const tfM = t.match(/\/\S+\s+([\d.]+)\s+Tf$/);
+      if (tfM) { fontSize = parseFloat(tfM[1]); continue; }
+      // Td / TD — relative move: tx ty Td
+      const tdM = t.match(/^(-?[\d.]+)\s+(-?[\d.]+)\s+TD?$/);
+      if (tdM) { curX += parseFloat(tdM[1]); curY += parseFloat(tdM[2]); continue; }
+      // Tm — absolute matrix: a b c d e f Tm
+      const tmM = t.match(/^(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+Tm$/);
+      if (tmM) { curX = parseFloat(tmM[5]); curY = parseFloat(tmM[6]); continue; }
+      // Tj — literal string: (text) Tj
+      const tjM = t.match(/^\((.+)\)\s+Tj$/);
+      if (tjM) { items.push({ text: tjM[1], x: curX, y: curY, h: fontSize }); continue; }
+      // TJ — array: [(text) kerning ...] TJ
+      const tjArrM = t.match(/^\[(.+)\]\s+TJ$/);
+      if (tjArrM) {
+        const extracted = [];
+        const pieces = tjArrM[1].matchAll(/\(([^)]*)\)/g);
+        for (const p of pieces) extracted.push(p[1]);
+        if (extracted.length) items.push({ text: extracted.join(''), x: curX, y: curY, h: fontSize });
+      }
+    }
+  } catch(_) { /* non-fatal — will use fallback position */ }
+  return items;
+}
+
+function findAnchor(items, searchText) {
+  const lower = searchText.toLowerCase();
+  // Try to find item whose text contains the anchor string
+  for (const item of items) {
+    if (item.text.toLowerCase().includes(lower)) return item;
+  }
+  // Try matching across consecutive items (text split across operators)
+  let accumulated = '';
+  let startItem = null;
+  for (const item of items) {
+    if (!startItem) startItem = item;
+    accumulated += item.text.toLowerCase();
+    if (accumulated.includes(lower)) return startItem;
+    if (accumulated.length > lower.length * 3) {
+      accumulated = accumulated.slice(-lower.length * 2);
+      startItem = item;
+    }
+  }
+  return null;
+}
+
+// ── AGENT RUN ────────────────────────────────────────────
 async function runAgent() {
   const pending = allEmails.filter(e => e.action === 'reply' || e.action === 'sign');
-  if(!pending.length) { toast('No pending emails to process.'); return; }
-  toast(`Running agent on ${pending.length} email(s)...`);
-  for(const e of pending) {
-    if(e.action === 'reply') await sendReply(e.id);
-    else if(e.action === 'sign' && sigData) await signAndSend(e.id);
+  if (!pending.length) { toast('No pending emails to process.'); return; }
+  toast(`Running agent on ${pending.length} email(s)…`);
+  for (const e of pending) {
+    if (e.action === 'reply') await sendReply(e.id);
+    else if (e.action === 'sign' && sigData) await signAndSend(e.id);
   }
   toast('Agent run complete!');
 }
 
-// ============================================================
-// NAVIGATION
-// ============================================================
+// ── NAVIGATION ────────────────────────────────────────────
 function setNav(el, view) {
   document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
-  if(el) el.classList.add('active');
+  if (el) el.classList.add('active');
   curNav = view;
   const iv = document.getElementById('inbox-view');
   const pp = document.getElementById('pdf-panel');
@@ -826,15 +1333,13 @@ function setNav(el, view) {
   iv.style.display = (view==='pdf'||view==='guidelines') ? 'none' : 'flex';
   pp.classList.toggle('vis', view==='pdf');
   gp.classList.toggle('vis', view==='guidelines');
-  if(view !== 'pdf' && view !== 'guidelines') renderEmailList(filterByNav(view));
+  if (view!=='pdf'&&view!=='guidelines') renderEmailList(filterByNav(view));
 }
 
-// ============================================================
-// SIGNATURE & PDF
-// ============================================================
+// ── SIGNATURE & PDF ───────────────────────────────────────
 function loadSignature(input) {
   const file = input.files[0];
-  if(!file) return;
+  if (!file) return;
   const reader = new FileReader();
   reader.onload = e => {
     sigData = e.target.result;
@@ -847,101 +1352,91 @@ function loadSignature(input) {
 
 function addManualPdf(input) {
   const file = input.files[0];
-  if(!file) return;
+  if (!file) return;
   pdfs.push({ name: file.name, status: 'pending', file });
   renderPdfs();
 }
 
 function renderPdfs() {
   const list = document.getElementById('pdf-list');
-  if(!pdfs.length) { list.innerHTML = ''; return; }
+  if (!pdfs.length) { list.innerHTML = ''; return; }
   list.innerHTML = pdfs.map((p,i) => `
     <div class="pdf-item">
-      <span class="icon">📄</span>
+      <span class="pdf-ic">📄</span>
       <span class="pdf-name">${esc(p.name)}</span>
-      <span class="pdf-status ${p.status==='signed'?'pdf-signed':'pdf-pending'}">${p.status}</span>
-      ${p.status==='pending' ? `<button class="sign-btn-sm" onclick="manualSignPdf(${i})">Sign</button>` : ''}
+      <span class="pdf-badge ${p.status==='signed'?'signed':'pending'}">${p.status}</span>
+      ${p.status==='pending' ? `<button class="pdf-sign-btn" onclick="manualSignPdf(${i})">Sign</button>` : ''}
     </div>`).join('');
 }
 
 async function manualSignPdf(i) {
-  if(!sigData) { toast('Upload your signature first.'); return; }
+  if (!sigData) { toast('Upload your signature first.'); return; }
   pdfs[i].status = 'signed';
   renderPdfs();
   toast('PDF signed: ' + pdfs[i].name);
 }
 
-// ============================================================
-// GUIDELINES
-// ============================================================
+// ── GUIDELINES ────────────────────────────────────────────
 function renderGuidelines() {
   document.getElementById('nb-gl').textContent = guidelines.length;
   document.getElementById('gl-list').innerHTML = guidelines.map(g => `
     <div class="gl-card" style="margin-bottom:8px">
-      <div class="gl-header">
-        <span class="gl-icon">${g.icon}</span>
-        <span class="gl-title">${esc(g.title)}</span>
-        <button class="gl-remove" onclick="removeGuideline(${g.id})" title="Remove">🗑️</button>
+      <div class="gl-top">
+        <span class="gl-ic">${g.icon}</span>
+        <span class="gl-name">${esc(g.title)}</span>
+        <button class="gl-del" onclick="removeGuideline(${g.id})" title="Remove">🗑️</button>
       </div>
       <div class="gl-desc">${esc(g.desc)}</div>
-      <span class="gl-trigger-pill">🏷️ ${esc(g.trigger)}</span>
+      <span class="gl-trigger">🏷️ ${esc(g.trigger)}</span>
     </div>`).join('');
 }
 
 function showGuidelineForm() { document.getElementById('gl-form').style.display = 'flex'; }
 function cancelGuideline() {
   document.getElementById('gl-form').style.display = 'none';
-  document.getElementById('gl-trigger-input').value = '';
-  document.getElementById('gl-title-input').value = '';
-  document.getElementById('gl-desc-input').value = '';
+  ['gl-trigger','gl-title','gl-desc'].forEach(id => document.getElementById(id).value = '');
 }
 function saveGuideline() {
-  const trigger = document.getElementById('gl-trigger-input').value.trim();
-  const title = document.getElementById('gl-title-input').value.trim();
-  const desc = document.getElementById('gl-desc-input').value.trim();
-  if(!trigger || !title || !desc) { toast('Please fill in all fields.'); return; }
+  const trigger = document.getElementById('gl-trigger').value.trim();
+  const title = document.getElementById('gl-title').value.trim();
+  const desc = document.getElementById('gl-desc').value.trim();
+  if (!trigger||!title||!desc) { toast('Please fill in all fields.'); return; }
   guidelines.push({ id: glNextId++, trigger, title, desc, icon: '📋' });
-  cancelGuideline();
-  renderGuidelines();
-  toast('Guideline added!');
+  cancelGuideline(); renderGuidelines(); toast('Guideline added!');
 }
 function removeGuideline(id) {
   guidelines = guidelines.filter(g => g.id !== id);
-  renderGuidelines();
-  toast('Guideline removed.');
+  renderGuidelines(); toast('Guideline removed.');
 }
 
-// ============================================================
-// HELPERS
-// ============================================================
+// ── HELPERS ───────────────────────────────────────────────
 function toast(msg) {
   const t = document.getElementById('toast');
   t.textContent = msg; t.className = 'toast show';
-  setTimeout(() => t.className = 'toast', 3000);
+  setTimeout(() => t.className = 'toast', 3200);
 }
 function esc(s) {
-  if(!s) return '';
+  if (!s) return '';
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 function formatTime(dt) {
-  if(!dt) return '';
-  const d = new Date(dt), now = new Date();
-  const diff = now - d;
-  if(diff < 86400000) return d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
-  if(diff < 604800000) return d.toLocaleDateString([], {weekday:'short'});
-  return d.toLocaleDateString([], {month:'short',day:'numeric'});
+  if (!dt) return '';
+  const d = new Date(dt), now = new Date(), diff = now - d;
+  if (diff < 86400000) return d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+  if (diff < 604800000) return d.toLocaleDateString([],{weekday:'short'});
+  return d.toLocaleDateString([],{month:'short',day:'numeric'});
 }
 function getInitials(name) {
   return name.split(' ').map(n=>n[0]).join('').substring(0,2).toUpperCase() || '?';
 }
 const avatarColors = [
-  {bg:'#E6F1FB',text:'#0C447C'},{bg:'#E1F5EE',text:'#0F6E56'},
-  {bg:'#FAEEDA',text:'#854F0B'},{bg:'#EEEDFE',text:'#3C3489'},
-  {bg:'#FAECE7',text:'#993C1D'},{bg:'#F1EFE8',text:'#444441'}
+  {bg:'#EAF1FF',text:'#1a6cf0'},{bg:'#e4f7f1',text:'#0b8f6a'},
+  {bg:'#fff4e0',text:'#b06500'},{bg:'#f0edfb',text:'#5b3fc4'},
+  {bg:'#fdf0f0',text:'#d43b3b'},{bg:'#f1f1ee',text:'#444'}
 ];
 function getAvatarColor(email) {
   let hash = 0;
-  for(let i=0;i<email.length;i++) hash = email.charCodeAt(i) + ((hash<<5)-hash);
+  for (let i=0; i<email.length; i++) hash = email.charCodeAt(i) + ((hash<<5)-hash);
   return avatarColors[Math.abs(hash) % avatarColors.length];
 }
 </script>
