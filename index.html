@@ -1113,7 +1113,7 @@ async function selectEmail(id) {
         </div>
         <div class="d-actions">
           <button class="dact" onclick="setNav(document.querySelectorAll('.nav-item')[10],'pdf')">📁 Upload signature</button>
-          <button class="dact sign-send" onclick="openPlacementModal()" ${ready?'':'disabled'}>✍️ Place &amp; send</button>
+          <button class="dact sign-send" onclick="signAndSend()" ${ready?'':'disabled'}>✍️ Sign &amp; send</button>
         </div>
       </div>`;
   } else {
@@ -1337,10 +1337,18 @@ async function fetchValidPdf(enc) {
       console.log('[fetchValidPdf] contentBytes length:', full.contentBytes.length,
         'first chars:', full.contentBytes.substring(0, 8));
 
-      // Decode and validate PDF header
+      // Decode base64 → raw bytes using a chunked approach
+      // (atob on very large strings can be unreliable in some browsers)
       let bytes;
       try {
-        bytes = Uint8Array.from(atob(full.contentBytes), ch => ch.charCodeAt(0));
+        const b64 = full.contentBytes.replace(/\s/g, ''); // strip whitespace
+        const binStr = atob(b64);
+        bytes = new Uint8Array(binStr.length);
+        for (let bi = 0; bi < binStr.length; bi++) {
+          bytes[bi] = binStr.charCodeAt(bi);
+        }
+        console.log('[fetchValidPdf] decoded', bytes.length, 'bytes, first4:',
+          bytes[0], bytes[1], bytes[2], bytes[3]);
       } catch(decodeErr) {
         errors.push(`${meta.name}: base64 decode failed — ${decodeErr.message}`);
         console.warn('[fetchValidPdf] base64 decode error for', meta.name, decodeErr);
@@ -1370,12 +1378,13 @@ async function fetchValidPdf(enc) {
 
       // Trim any leading bytes before %PDF if needed
       const pdfBytes = pdfOffset > 0 ? bytes.slice(pdfOffset) : bytes;
-      // Re-encode trimmed bytes to base64 if we trimmed
-      const pdfBase64 = pdfOffset > 0
-        ? btoa(Array.from(pdfBytes).map(b => String.fromCharCode(b)).join(''))
-        : full.contentBytes;
+      // Always re-encode from the decoded bytes to ensure consistency
+      const pdfBase64 = btoa(
+        Array.from(pdfBytes, b => String.fromCharCode(b)).join('')
+      );
 
-      console.log('[fetchValidPdf] ✅ valid PDF:', meta.name, 'bytes:', pdfBytes.length);
+      console.log('[fetchValidPdf] ✅ valid PDF:', meta.name, 'bytes:', pdfBytes.length,
+        'base64 len:', pdfBase64.length);
       return { bytes: pdfBytes, name: full.name || meta.name, base64: pdfBase64 };
 
     } catch(e) {
@@ -1433,7 +1442,11 @@ async function openPlacementModal() {
     modalClickX = null; modalClickY = null; modalClickPage = null;
 
     // Also load with pdf-lib so we have it ready for signing
-    modalPdfDoc = await PDFLib.PDFDocument.load(rawBytes);
+    // Pass a fresh copy of the bytes to avoid any shared buffer issues
+    modalPdfDoc = await PDFLib.PDFDocument.load(
+      rawBytes.slice(),
+      { ignoreEncryption: true, updateMetadata: false }
+    );
 
     document.getElementById('modal-confirm-btn').disabled = true;
     document.getElementById('placement-modal').classList.add('open');
@@ -1593,7 +1606,10 @@ async function signAndSend(id, placement) {
       pdfName   = pdf.name;
       pdfBase64 = pdf.base64;
       // pdf.bytes are already decoded raw bytes — load directly, no re-decode
-      pdfDoc = await PDFLib.PDFDocument.load(pdf.bytes);
+      pdfDoc = await PDFLib.PDFDocument.load(
+        pdf.bytes.slice(),
+        { ignoreEncryption: true, updateMetadata: false }
+      );
     }
     // Keep fullAttach name for the outgoing attachment
     const fullAttach = { name: pdfName, contentBytes: pdfBase64 };
@@ -1636,26 +1652,76 @@ async function signAndSend(id, placement) {
       sigX = placement.x - sigW / 2;
       sigY = placement.y;
     } else {
-      // Auto-detect with Claude Vision
-      toast('🤖 Claude is locating the signature spot…');
-      try {
-        const visionResult = await findSignatureLocationWithClaude(
-          fullAttach.contentBytes, isPO, isOBD, pages
-        );
-        targetPageIndex = visionResult.pageIndex;
-        const pg = pages[targetPageIndex];
-        const { width: pgW, height: pgH } = pg.getSize();
-        // visionResult.xPct and yPct are 0-100 from top-left of the page image
-        // pdf-lib origin is bottom-left, so flip Y
-        sigX = (visionResult.xPct / 100) * pgW - sigW / 2;
-        sigY = pgH - (visionResult.yPct / 100) * pgH - sigH;
-        console.log('[vision] pageIndex:', targetPageIndex,
-          'xPct:', visionResult.xPct, 'yPct:', visionResult.yPct,
-          '→ sigX:', sigX.toFixed(1), 'sigY:', sigY.toFixed(1));
-      } catch (visionErr) {
-        console.warn('[vision] failed:', visionErr.message, '— using fallback');
-        targetPageIndex = pages.length - 1;
-        sigX = width - sigW - 50;
+      // Automatic placement:
+      //   X is FIXED (left margin, same on every Gulf Medical PO/OBD)
+      //   Y is found by scanning text items for the anchor string,
+      //     then mapping the raw coordinate proportionally onto the page height.
+      //
+      // This handles documents where "Alaadin Yacout" appears at different
+      // vertical positions on different orders.
+
+      targetPageIndex = pages.length - 1;
+      const tpg = pages[targetPageIndex];
+      const { width: tW, height: tH } = tpg.getSize();
+
+      // Fixed X — always left-aligned to match the name block
+      const FIXED_X = tW * 0.05;
+
+      if (isPO || isOBD) {
+        const anchorText = isPO ? 'alaadin yacout' : 'approved by';
+
+        // Search last 2 pages for the anchor
+        let autoSigY = null;
+        let autoPageIdx = pages.length - 1;
+
+        for (let pi = pages.length - 1; pi >= Math.max(0, pages.length - 2); pi--) {
+          const pg    = pages[pi];
+          const { height: pgH } = pg.getSize();
+          const items = extractTextItems(pg);
+          const anchor = findAnchor(items, anchorText);
+
+          if (anchor && items.length > 1) {
+            // Map raw Y → page space using min/max normalisation with axis flip
+            const allY   = items.map(i => i.y);
+            const minY   = Math.min(...allY);
+            const maxY   = Math.max(...allY);
+            const rangeY = maxY - minY || 1;
+
+            // normY: 0 = top of content, 1 = bottom of content
+            const normY  = (anchor.y - minY) / rangeY;
+            // pdf-lib Y from bottom: top of content = pgH, bottom = 0
+            const pageY  = (1 - normY) * pgH;
+
+            if (isPO) {
+              // Place signature ABOVE the name: bottom of sig sits at pageY
+              autoSigY  = pageY;
+            } else {
+              // OBD: place BELOW "Approved by"
+              autoSigY  = pageY - sigH - 6;
+            }
+            autoPageIdx = pi;
+            console.log('[placement] anchor:', anchorText,
+              'normY:', normY.toFixed(3), 'pageY:', pageY.toFixed(1),
+              'sigY:', autoSigY.toFixed(1), 'pgH:', pgH.toFixed(1));
+            break;
+          }
+        }
+
+        if (autoSigY !== null) {
+          targetPageIndex = autoPageIdx;
+          sigX = FIXED_X;
+          sigY = autoSigY;
+        } else {
+          // Text not found — use fixed proportional fallback
+          console.warn('[placement] anchor not found, using fallback Y');
+          targetPageIndex = pages.length - 1;
+          sigX = FIXED_X;
+          sigY = isPO ? tH * 0.72 : tH * 0.65;
+        }
+
+      } else {
+        // Generic — bottom right
+        sigX = tW - sigW - 50;
         sigY = 50;
       }
     }
