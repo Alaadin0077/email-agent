@@ -92,20 +92,11 @@ body {
 /* ── GATE — CYBER SECURITY THEME ── */
 #gate-screen {
   flex: 1; display: flex; align-items: center; justify-content: center;
-  background: #020c14; position: relative; overflow: hidden;
-}
-#gate-canvas { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
-#gate-screen::before {
-  content: ''; position: absolute; inset: 0; z-index: 0;
   background:
-    radial-gradient(ellipse 60% 50% at 15% 60%, rgba(0,255,136,0.06) 0%, transparent 60%),
-    radial-gradient(ellipse 50% 60% at 85% 30%, rgba(0,180,255,0.06) 0%, transparent 60%);
-  pointer-events: none;
-}
-#gate-screen::after {
-  content: ''; position: absolute; inset: 0; z-index: 0;
-  background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,255,136,0.012) 2px, rgba(0,255,136,0.012) 4px);
-  pointer-events: none;
+    radial-gradient(ellipse 70% 60% at 20% 50%, rgba(0,255,136,0.08) 0%, transparent 55%),
+    radial-gradient(ellipse 60% 70% at 80% 40%, rgba(0,180,255,0.07) 0%, transparent 55%),
+    linear-gradient(135deg, #020c14 0%, #071824 50%, #020c14 100%);
+  position: relative; overflow: hidden;
 }
 .gate-outer {
   position: relative; z-index: 1;
@@ -168,14 +159,9 @@ body {
   border: 1px solid rgba(0,255,136,0.4); cursor: pointer; transition: all .2s;
   position: relative; overflow: hidden;
 }
-.gate-btn::before {
-  content: ''; position: absolute; inset: 0;
-  background: linear-gradient(90deg, transparent, rgba(0,255,136,0.1), transparent);
-  transform: translateX(-100%); transition: transform .5s;
-  pointer-events: none;
-}
+
 .gate-btn:hover { background: rgba(0,255,136,0.1); border-color: rgba(0,255,136,0.7); box-shadow: 0 0 20px rgba(0,255,136,0.15); }
-.gate-btn:hover::before { transform: translateX(100%); }
+
 .gate-btn:active { transform: scale(.99); }
 .gate-err { font-size: 11px; color: #f87171; margin-top: 10px; display: none; font-family: var(--mono); }
 
@@ -185,40 +171,11 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #020c14;
-  position: relative;
-  overflow: hidden;
-}
-
-/* Animated matrix canvas sits behind everything */
-#cyber-canvas {
-  position: absolute; inset: 0;
-  pointer-events: none; z-index: 0;
-}
-
-/* Radial glow spots */
-#login-screen::before {
-  content: '';
-  position: absolute; inset: 0; z-index: 0;
   background:
-    radial-gradient(ellipse 60% 50% at 15% 60%, rgba(0,255,136,0.07) 0%, transparent 60%),
-    radial-gradient(ellipse 50% 60% at 85% 30%, rgba(0,180,255,0.07) 0%, transparent 60%),
-    radial-gradient(ellipse 40% 40% at 50% 50%, rgba(120,0,255,0.05) 0%, transparent 50%);
-  pointer-events: none;
-}
-
-/* Top + bottom scan lines */
-#login-screen::after {
-  content: '';
-  position: absolute; inset: 0; z-index: 0;
-  background: repeating-linear-gradient(
-    0deg,
-    transparent,
-    transparent 2px,
-    rgba(0,255,136,0.015) 2px,
-    rgba(0,255,136,0.015) 4px
-  );
-  pointer-events: none;
+    radial-gradient(ellipse 70% 60% at 20% 50%, rgba(0,255,136,0.08) 0%, transparent 55%),
+    radial-gradient(ellipse 60% 70% at 80% 40%, rgba(0,180,255,0.07) 0%, transparent 55%),
+    linear-gradient(135deg, #020c14 0%, #071824 50%, #020c14 100%);
+  position: relative; overflow: hidden;
 }
 
 .login-outer {
@@ -348,21 +305,12 @@ body {
   align-items: center;
   justify-content: center;
   gap: 10px;
-  transition: all .2s;
+  transition: background .15s, border-color .15s, box-shadow .15s;
   text-transform: uppercase;
-  position: relative;
-  overflow: hidden;
 }
-.ms-btn::before {
-  content: '';
-  position: absolute; inset: 0;
-  background: linear-gradient(90deg, transparent 0%, rgba(0,255,136,0.08) 50%, transparent 100%);
-  transform: translateX(-100%);
-  transition: transform .5s;
-  pointer-events: none;
-}
+
 .ms-btn:hover { background: rgba(0,255,136,0.14); border-color: rgba(0,255,136,0.6); box-shadow: 0 0 20px rgba(0,255,136,0.15); }
-.ms-btn:hover::before { transform: translateX(100%); }
+
 .ms-btn:active { transform: scale(.99); }
 .ms-btn svg { width: 18px; height: 18px; }
 .login-note { font-size: 10px; color: rgba(0,255,136,0.3); text-align: center; margin-top: 12px; font-family: var(--mono); letter-spacing: .05em; }
@@ -839,7 +787,6 @@ body {
 
 <!-- GATE -->
 <div id="gate-screen">
-  <canvas id="gate-canvas"></canvas>
   <div class="gate-outer">
     <div class="gate-headline">
       <div class="gate-cyber-tag">Access Control</div>
@@ -860,7 +807,6 @@ body {
 
 <!-- LOGIN -->
 <div id="login-screen" style="display:none">
-  <canvas id="cyber-canvas"></canvas>
 
   <div class="login-outer">
     <!-- Big welcome headline -->
@@ -1054,47 +1000,6 @@ body {
 <script>
 // ── CONFIG ──────────
 // ── CYBER MATRIX ANIMATION ───────────────────────────────────
-
-function startMatrixOn(canvasId) {
-  const canvas = document.getElementById(canvasId);
-  if (!canvas) return;
-  const ctx = canvas.getContext('2d');
-  function resize() { canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight; }
-  resize();
-  window.addEventListener('resize', resize);
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%^&*<>/\|アイウエオカキクケコ';
-  const fontSize = 13;
-  let drops = [];
-  const colors = ['#00ff88','#00c866','#00b4ff','#0099dd'];
-  function draw() {
-    const cols = Math.floor(canvas.width / fontSize);
-    while (drops.length < cols) drops.push(Math.random() * (canvas.height / fontSize));
-    ctx.fillStyle = 'rgba(2,12,20,0.06)'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.font = fontSize + "px 'DM Mono', monospace";
-    for (let i = 0; i < cols; i++) {
-      ctx.fillStyle = colors[Math.floor(Math.random() * colors.length)];
-      ctx.globalAlpha = 0.14 + Math.random() * 0.16;
-      ctx.fillText(chars[Math.floor(Math.random() * chars.length)], i * fontSize, drops[i] * fontSize);
-      ctx.globalAlpha = 1;
-      if (drops[i] * fontSize > canvas.height && Math.random() > 0.975) drops[i] = 0;
-      drops[i]++;
-    }
-  }
-  setInterval(draw, 50);
-}
-setTimeout(() => startMatrixOn('gate-canvas'), 60);
-
-// Start matrix when login screen is visible
-const _loginObs = new MutationObserver(() => {
-  const ls = document.getElementById('login-screen');
-  if (ls && ls.style.display !== 'none') startMatrixOn('cyber-canvas');
-});
-_loginObs.observe(document.body, { childList: true, subtree: true, attributes: true });
-// Also try immediately
-setTimeout(() => {
-  const ls = document.getElementById('login-screen');
-  if (ls && ls.style.display !== 'none') startMatrixOn('cyber-canvas');
-}, 100);
 
 // ── CONFIG ──────────────────────────────────────────────
 const ACCESS_PASSWORD = 'EmailAgent2024!';
