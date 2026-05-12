@@ -2204,16 +2204,48 @@ async function signAndSend(id, placement) {
 
     toast('✅ Signed PDF sent to ' + recipientName + '!');
 
-    // Move the original email back to Inbox if Outlook auto-archived it
+    // After sending, keep the original email in inbox:
+    // 1. Mark as read (prevents it looking unprocessed)
+    // 2. Move to inbox (in case Outlook auto-archived it)
+    // 3. Flag it so it's easy to find
     try {
-      await fetch('https://graph.microsoft.com/v1.0/me/messages/' + enc + '/move', {
-        method: 'POST',
+      // Mark as read + flagged
+      await fetch('https://graph.microsoft.com/v1.0/me/messages/' + enc, {
+        method: 'PATCH',
         headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ destinationId: 'inbox' })
+        body: JSON.stringify({
+          isRead: true,
+          flag: { flagStatus: 'flagged' }
+        })
       });
-      console.log('[post-send] email kept/moved to inbox');
+      console.log('[post-send] email marked read + flagged');
+    } catch(patchErr) {
+      console.warn('[post-send] patch failed:', patchErr.message);
+    }
+
+    try {
+      // Get inbox folder id first (more reliable than 'inbox' string)
+      const inboxRes = await fetch('https://graph.microsoft.com/v1.0/me/mailFolders/inbox', {
+        headers: { Authorization: 'Bearer ' + token }
+      });
+      if (inboxRes.ok) {
+        const inboxData = await inboxRes.json();
+        const inboxId = inboxData.id;
+        // Move the message to inbox
+        const moveRes = await fetch('https://graph.microsoft.com/v1.0/me/messages/' + enc + '/move', {
+          method: 'POST',
+          headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ destinationId: inboxId })
+        });
+        if (moveRes.ok) {
+          console.log('[post-send] email moved to inbox');
+        } else {
+          const errText = await moveRes.text();
+          console.warn('[post-send] move failed:', errText);
+        }
+      }
     } catch(moveErr) {
-      console.warn('[post-send] could not move to inbox:', moveErr.message);
+      console.warn('[post-send] move to inbox failed:', moveErr.message);
     }
 
     e.action = 'done'; e.tags = e.tags.filter(t => t !== 'sign');
